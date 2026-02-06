@@ -1,0 +1,3 @@
+pages that are not created yet
+
+admin/idcard
