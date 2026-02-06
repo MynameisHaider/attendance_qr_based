@@ -195,7 +195,7 @@ VALUES (
   'teacher@school.edu',
   'teacher'
 );
-password: teacher123
+
 ```
 
 

@@ -1,3 +1,35 @@
 pages that are not created yet
 
-admin/idcard
+admin/idcards ---------->done
+admin/students/adminssionNumber/idcard      downloadPdf button is not set yet
+
+
+
+### 6.2 Create Profile in SQL
+
+Run this SQL to create the admin profile:
+
+```sql
+INSERT INTO profiles (id, full_name, email, role)
+VALUES (
+  (SELECT id FROM auth.users WHERE email = 'admin@school.edu'),
+  'Admin User',
+  'admin@school.edu',
+  'admin'
+);
+password: admin123
+```
+
+### 6.3 Create Teacher User
+
+Repeat the process for teachers, changing the role to `'teacher'`.
+```sql
+INSERT INTO profiles (id, full_name, email, role)
+VALUES (
+  (SELECT id FROM auth.users WHERE email = 'teacher@ghss.edu'),
+  'teacher User',
+  'teacher@school.edu',
+  'teacher'
+);
+password: teacher123
+```
