@@ -243,7 +243,8 @@ export default function ScannerClient() {
             {sessionId && scanning && hasCameraAccess && (
               <div className="space-y-4">
                 <div className="relative aspect-video bg-black rounded-lg overflow-hidden">
-                   <video ref={videoRef} className="hidden" playsInline />
+                   <video ref={videoRef} className="w-full h-full object-cover rounded-lg" playsInline muted
+  autoPlay />
                    <canvas ref={canvasRef} className="hidden" />
                    <div className="absolute inset-0 pointer-events-none border-4 border-white/20">
                       <div className="absolute inset-0 flex items-center justify-center">
