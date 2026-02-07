@@ -13,7 +13,8 @@ export async function generateQRToken(payload: QRCodePayload): Promise<string> {
   })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt(new Date(payload.issueDate).getTime() / 1000)
-    .setExpirationTime(payload.expiryDate)
+    //.setExpirationTime(payload.expiryDate)
+	.setExpirationTime(`${payload.expiryDate}d`)
     .sign(secret)
 
   return token

@@ -1,4 +1,5 @@
 'use client'
+
 export const dynamic = 'force-dynamic';
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -11,6 +12,14 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ArrowLeft, Download, Printer, Search, Loader2 } from 'lucide-react'
 import QRCodeDisplay from 'react-qr-code'
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  // Ye check build ke waqt error ko clear batayega
+  console.warn("Supabase credentials missing!");
+}
 
 
 interface Student {

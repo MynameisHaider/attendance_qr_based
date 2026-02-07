@@ -32,7 +32,10 @@ export async function GET(request: NextRequest) {
 
     // Generate QR token (valid for 1 year)
     const payload = generateQRPayload(admissionNumber, 365)
-    const token = await generateQRToken(payload)
+	const token = await generateQRToken({
+	...payload,
+		expiryDate: '365d' // Jose library '365d' ko samajh legi
+})
 
     return NextResponse.json({
       token,
