@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { generateQRToken, generateQRPayload } from '@/lib/qrcode'
 
 export async function GET(request: NextRequest) {
   try {
@@ -30,15 +29,9 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Generate QR token (valid for 1 year)
-    const payload = generateQRPayload(admissionNumber, 365)
-	const token = await generateQRToken({
-	...payload,
-		expiryDate: '365d' // Jose library '365d' ko samajh legi
-})
-
+    // Return just the admission number as QR code value (no JWT token)
     return NextResponse.json({
-      token,
+      qrCode: student.admission_number,
       student: {
         admissionNumber: student.admission_number,
         fullName: student.full_name,
@@ -47,9 +40,9 @@ export async function GET(request: NextRequest) {
       },
     })
   } catch (error) {
-    console.error('QR token generation error:', error)
+    console.error('QR code generation error:', error)
     return NextResponse.json(
-      { error: 'Failed to generate QR token' },
+      { error: 'Failed to generate QR code' },
       { status: 500 }
     )
   }

@@ -28,7 +28,7 @@ export default function IDCardPage() {
   const supabase = createClient()
   const [loading, setLoading] = useState(true)
   const [student, setStudent] = useState<Student | null>(null)
-  const [qrToken, setQrToken] = useState<string>('')
+  const [qrCode, setQrCode] = useState<string>('')
   const [generatingPDF, setGeneratingPDF] = useState(false)
 
   useEffect(() => {
@@ -48,12 +48,8 @@ export default function IDCardPage() {
 
       if (studentData) {
         setStudent(studentData)
-        // Fetch QR token
-        const response = await fetch(`/api/qr/token?admissionNumber=${admissionNumber}`)
-        const data = await response.json()
-        if (data.token) {
-          setQrToken(data.token)
-        }
+        // Set QR code as just the admission number
+        setQrCode(studentData.admission_number)
       }
     } catch (error) {
       console.error('Error fetching student:', error)
@@ -63,7 +59,7 @@ export default function IDCardPage() {
   }
 
   const handleDownloadPDF = async () => {
-    if (!student || !qrToken) return
+    if (!student || !qrCode) return
 
     setGeneratingPDF(true)
 
@@ -80,7 +76,7 @@ export default function IDCardPage() {
       const pdf = new jsPDF({
         orientation: 'landscape',
         unit: 'mm',
-        format: [95.6, 73.98], // Credit card size
+        format: [85.6, 53.98], // Credit card size
       })
 
       pdf.addImage(imgData, 'PNG', 0, 0, 85.6, 53.98)
@@ -213,11 +209,11 @@ export default function IDCardPage() {
               {/* QR Code */}
               <div className="flex-shrink-0">
                 <div className="w-[18mm] h-[18mm] bg-white rounded-lg p-1">
-                  {qrToken && (
+                  {qrCode && (
                     <QRCodeDisplay
-                      value={qrToken}
+                      value={qrCode}
                       size={56}
-                      bgColor="#bbbbbb"
+                      bgColor="#ffffff"
                       fgColor="#000000"
                       level="H"
                     />

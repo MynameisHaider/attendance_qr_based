@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { verifyQRToken } from '@/lib/qrcode'
 
 export async function POST(request: NextRequest) {
   try {
-    const { qrToken, sessionId } = await request.json()
+    const { admissionNumber, sessionId } = await request.json()
 
-    if (!qrToken) {
+    if (!admissionNumber) {
       return NextResponse.json(
-        { error: 'QR token is required' },
+        { error: 'Admission number is required' },
         { status: 400 }
       )
     }
@@ -25,13 +24,17 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Verify QR token
-    const payload = await verifyQRToken(qrToken)
+    // Get student information
+    const { data: student, error: studentError } = await supabase
+      .from('students')
+      .select('*')
+      .eq('admission_number', admissionNumber)
+      .single()
 
-    if (!payload) {
+    if (studentError || !student) {
       return NextResponse.json(
-        { error: 'Invalid or expired QR code' },
-        { status: 400 }
+        { error: 'Student not found' },
+        { status: 404 }
       )
     }
 
@@ -52,20 +55,6 @@ export async function POST(request: NextRequest) {
       }
 
       session = sessionData
-    }
-
-    // Get student information
-    const { data: student, error: studentError } = await supabase
-      .from('students')
-      .select('*')
-      .eq('admission_number', payload.admissionNumber)
-      .single()
-
-    if (studentError || !student) {
-      return NextResponse.json(
-        { error: 'Student not found' },
-        { status: 404 }
-      )
     }
 
     // If session is provided, verify it's active and check time window
@@ -91,6 +80,16 @@ export async function POST(request: NextRequest) {
           { error: 'Session is not active' },
           { status: 400 }
         )
+      }
+
+      // Check session scope and student eligibility
+      if (session.scope === 'specific') {
+        if (student.class !== session.class || student.section !== session.section) {
+          return NextResponse.json(
+            { error: 'This session is not for this student' },
+            { status: 400 }
+          )
+        }
       }
 
       if (currentTime < startTime) {
@@ -174,22 +173,39 @@ export async function POST(request: NextRequest) {
         status: status,
       })
     } else {
-      // General scan without specific session
+      // General scan without specific session - find active session
       const today = new Date().toISOString().split('T')[0]
 
-      // Find active session for student's class
-      const { data: activeSession } = await supabase
+      // First, try to find an "all" scope active session
+      const { data: allScopeSession } = await supabase
         .from('attendance_sessions')
         .select('*')
-        .eq('class', student.class)
-        .eq('section', student.section)
+        .eq('scope', 'all')
         .eq('date', today)
         .eq('status', 'active')
         .single()
 
+      let activeSession = null
+      if (allScopeSession) {
+        activeSession = allScopeSession
+      } else {
+        // If no "all" session, look for "specific" scope session for this student's class
+        const { data: specificScopeSession } = await supabase
+          .from('attendance_sessions')
+          .select('*')
+          .eq('class', student.class)
+          .eq('section', student.section)
+          .eq('scope', 'specific')
+          .eq('date', today)
+          .eq('status', 'active')
+          .single()
+
+        activeSession = specificScopeSession
+      }
+
       if (!activeSession) {
         return NextResponse.json(
-          { error: 'No active attendance session for this class' },
+          { error: 'No active attendance session' },
           { status: 400 }
         )
       }

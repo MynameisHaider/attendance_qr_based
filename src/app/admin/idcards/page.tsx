@@ -1,5 +1,4 @@
 'use client'
-
 export const dynamic = 'force-dynamic';
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -10,9 +9,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { ArrowLeft, Download, Printer, Search, Loader2 } from 'lucide-react'
+import { ArrowLeft, Download, Printer, Search } from 'lucide-react'
 import QRCodeDisplay from 'react-qr-code'
-
 
 interface Student {
   admission_number: string
@@ -31,7 +29,6 @@ export default function IDCardsPage() {
   const [searchTerm, setSearchTerm] = useState('')
   const [filterClass, setFilterClass] = useState('all')
   const [filterSection, setFilterSection] = useState('all')
-  const [generatingAll, setGeneratingAll] = useState(false)
 
   useEffect(() => {
     fetchStudents()
@@ -69,24 +66,6 @@ export default function IDCardsPage() {
     }
   }
 
-  const handleDownloadAll = async () => {
-    setGeneratingAll(true)
-
-    try {
-      for (let i = 0; i < filteredStudents.length; i++) {
-        const student = filteredStudents[i]
-        // Get QR token for each student
-        await fetch(`/api/qr/token?admissionNumber=${student.admission_number}`)
-      }
-      alert(`QR tokens generated for ${filteredStudents.length} students!`)
-    } catch (error) {
-      console.error('Error generating QR tokens:', error)
-      alert('Failed to generate QR tokens')
-    } finally {
-      setGeneratingAll(false)
-    }
-  }
-
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900">
@@ -118,22 +97,6 @@ export default function IDCardsPage() {
                 </p>
               </div>
             </div>
-            <Button
-              onClick={handleDownloadAll}
-              disabled={generatingAll || filteredStudents.length === 0}
-            >
-              {generatingAll ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <Download className="h-4 w-4 mr-2" />
-                  Generate All QR Codes
-                </>
-              )}
-            </Button>
           </div>
         </div>
       </header>
@@ -242,7 +205,7 @@ export default function IDCardsPage() {
                         {/* Placeholder QR code */}
                         <div className="w-24 h-24 bg-white rounded-lg border-2 border-slate-200 flex items-center justify-center p-2 group-hover:scale-105 transition-transform">
                           <QRCodeDisplay
-                            value={`STUDENT_${student.admission_number}`}
+                            value={student.admission_number}
                             size={64}
                             bgColor="#ffffff"
                             fgColor="#000000"
