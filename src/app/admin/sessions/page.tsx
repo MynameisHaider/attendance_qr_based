@@ -42,8 +42,8 @@ export default function SessionsPage() {
       const { data } = await supabase
         .from('attendance_sessions')
         .select('*')
-		.limit(1);
-       // .order('date', { ascending: false })
+		//.limit(1);
+       .order('date', { ascending: false })
         //.order('created_at', { ascending: false })
 console.log("Database se aaya data:", data);
       if (data) {

@@ -177,7 +177,7 @@ Run this SQL to create the admin profile:
 ```sql
 INSERT INTO profiles (id, full_name, email, role)
 VALUES (
-  (SELECT id FROM auth.users WHERE email = 'admin@school.edu'),
+  (SELECT id FROM auth.users WHERE email = 'admin@ghss.edu'),
   'Admin User',
   'admin@school.edu',
   'admin'

@@ -1,36 +1,35 @@
 -- ============================================
 -- QR Code Based School Attendance System
--- FULL EXTENDED SCHEMA (Fixed & Safe)
+-- Supabase Schema Setup (Idempotent Version)
+-- This script can be run multiple times safely
 -- ============================================
 
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ============================================
--- 1. ENUMS (Fixed: Removed "IF NOT EXISTS" from TYPE)
+-- ENUMS (IF NOT EXISTS)
 -- ============================================
-DO $$ BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'user_role') THEN
-        CREATE TYPE user_role AS ENUM ('admin', 'teacher');
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'attendance_status') THEN
-        CREATE TYPE attendance_status AS ENUM ('present', 'absent', 'late', 'excused');
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'session_status') THEN
-        CREATE TYPE session_status AS ENUM ('scheduled', 'active', 'completed');
-    END IF;
+
+CREATE TYPE IF NOT EXISTS user_role AS ENUM ('admin', 'teacher');
+CREATE TYPE IF NOT EXISTS attendance_status AS ENUM ('present', 'absent', 'late', 'excused');
+CREATE TYPE IF NOT EXISTS session_status AS ENUM ('scheduled', 'active', 'completed');
+
+-- Note: session_scope may need to be added if it doesn't exist
+DO $$
+BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'session_scope') THEN
         CREATE TYPE session_scope AS ENUM ('all', 'specific');
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'audit_action') THEN
-        CREATE TYPE audit_action AS ENUM ('manual_attendance', 'manual_override', 'leave_marking', 'system_auto');
-    END IF;
 END $$;
 
+CREATE TYPE IF NOT EXISTS audit_action AS ENUM ('manual_attendance', 'manual_override', 'leave_marking', 'system_auto');
+
 -- ============================================
--- 2. TABLES
+-- TABLES (IF NOT EXISTS - schema updates require manual ALTER)
 -- ============================================
 
+-- Profiles table (linked to auth.users)
 CREATE TABLE IF NOT EXISTS profiles (
     id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     full_name TEXT NOT NULL,
@@ -40,6 +39,7 @@ CREATE TABLE IF NOT EXISTS profiles (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW())
 );
 
+-- Students table
 CREATE TABLE IF NOT EXISTS students (
     admission_number TEXT PRIMARY KEY,
     full_name TEXT NOT NULL,
@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS students (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW())
 );
 
+-- Attendance sessions table
 CREATE TABLE IF NOT EXISTS attendance_sessions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     class TEXT DEFAULT '',
@@ -64,13 +65,25 @@ CREATE TABLE IF NOT EXISTS attendance_sessions (
     start_time TIME NOT NULL,
     end_time TIME NOT NULL,
     status session_status NOT NULL DEFAULT 'scheduled',
-    scope session_scope NOT NULL DEFAULT 'specific',
     created_by UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()),
     CONSTRAINT unique_class_section_date UNIQUE (class, section, date)
 );
 
+-- Add scope column to attendance_sessions if it doesn't exist
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'attendance_sessions'
+        AND column_name = 'scope'
+    ) THEN
+        ALTER TABLE attendance_sessions ADD COLUMN scope session_scope NOT NULL DEFAULT 'specific';
+    END IF;
+END $$;
+
+-- Attendance logs table
 CREATE TABLE IF NOT EXISTS attendance_logs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     student_id TEXT NOT NULL REFERENCES students(admission_number) ON DELETE CASCADE,
@@ -83,6 +96,7 @@ CREATE TABLE IF NOT EXISTS attendance_logs (
     CONSTRAINT unique_student_date UNIQUE (student_id, date, session_id)
 );
 
+-- Audit logs table
 CREATE TABLE IF NOT EXISTS audit_logs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     action audit_action NOT NULL,
@@ -317,8 +331,8 @@ CREATE TRIGGER attendance_log_update
     FOR EACH ROW
     WHEN (OLD.status IS DISTINCT FROM NEW.status)
     EXECUTE FUNCTION log_attendance_change();
-	
-	-- ============================================
+
+-- ============================================
 -- ROW LEVEL SECURITY (RLS)
 -- ============================================
 
