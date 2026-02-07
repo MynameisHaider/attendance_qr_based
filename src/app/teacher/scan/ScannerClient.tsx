@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { QrCode, ArrowLeft, CheckCircle2, XCircle, AlertTriangle, Loader2, RefreshCw, X } from 'lucide-react'
-import { decode } from 'html5-qrcode'
+import { Html5Qrcode } from 'html5-qrcode'
 
 interface ScanResult {
   success: boolean
@@ -111,28 +111,41 @@ export default function ScannerClient() {
     return () => stopCamera()
   }, [useFrontCamera])
 
-  const startScanning = () => {
-    if (!canvasRef.current || !videoRef.current) return
-    const canvas = canvasRef.current
-    const video = videoRef.current
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
+ const startScanning = () => {
+  if (!canvasRef.current || !videoRef.current) return
+  const canvas = canvasRef.current
+  const video = videoRef.current
+  const ctx = canvas.getContext('2d', { willReadFrequently: true }) // Performance booster
+  if (!ctx) return
 
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
+  canvas.width = video.videoWidth
+  canvas.height = video.videoHeight
 
-    scanIntervalRef.current = setInterval(() => {
-      if (!scanning) return
-      try {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-        const code = decode(imageData.data, imageData.width, imageData.height)
-        if (code) {
-          handleQRCodeDetected(code)
-        }
-      } catch (error) {}
-    }, 200)
-  }
+  // Scanner instance ki zaroorat nahi, sirf static decoder use karenge
+  const html5QrCode = new Html5Qrcode("reader-hidden"); // Ek dummy hidden div ID chahiye hogi
+
+  scanIntervalRef.current = setInterval(async () => {
+    if (!scanning) return
+    try {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+      
+      // html5-qrcode canvas se direct scan karne ka behtar tareeqa deta hai
+      // Lekin agar aap image data use karna chahte hain:
+      const dataUrl = canvas.toDataURL('image/jpeg');
+      
+      // scanImage method use karein (ye Promise return karta hai)
+      const qrCodeInstance = new Html5Qrcode("reader-hidden-id"); 
+      // Note: Humne neeche UI mein ek hidden div add karni hai
+      
+      const decodedText = await qrCodeInstance.scanFileV2(canvas.toDataURL());
+      if (decodedText) {
+        handleQRCodeDetected(decodedText.decodedText);
+      }
+    } catch (error) {
+      // No QR code found, ignore error
+    }
+  }, 300); // 300ms interval behtar hai battery ke liye
+}
 
   const stopScanning = () => {
     if (scanIntervalRef.current) {
@@ -238,6 +251,7 @@ export default function ScannerClient() {
                       </div>
                    </div>
                 </div>
+				<div id="reader-hidden-id" className="hidden"></div>
                 <div className="flex gap-2 justify-center">
                   <Button variant="outline" size="sm" onClick={handleSwitchCamera} disabled={cameraCount <= 1}>
                     <RefreshCw className="h-4 w-4 mr-2" /> Switch Camera ({cameraCount})
