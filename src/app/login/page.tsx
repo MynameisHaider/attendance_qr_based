@@ -1,5 +1,6 @@
 'use client'
 
+export const dynamic = 'force-dynamic';
 import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
@@ -10,7 +11,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Loader2, LogIn, ArrowLeft, AlertCircle, CheckCircle2 } from 'lucide-react'
-export const dynamic = 'force-dynamic';
+
 
 export default function LoginPage() {
   const router = useRouter()
