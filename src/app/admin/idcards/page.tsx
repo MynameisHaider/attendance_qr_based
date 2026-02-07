@@ -13,14 +13,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { ArrowLeft, Download, Printer, Search, Loader2 } from 'lucide-react'
 import QRCodeDisplay from 'react-qr-code'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  // Ye check build ke waqt error ko clear batayega
-  console.warn("Supabase credentials missing!");
-}
-
 
 interface Student {
   admission_number: string
