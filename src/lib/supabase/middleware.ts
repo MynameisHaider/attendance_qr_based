@@ -9,9 +9,19 @@ export async function updateSession(request: NextRequest) {
     },
   })
 
+  // 1. Safe Variable Retrieval (Hata diya "!")
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+  // 2. Critical Check: Agar variables nahi hain toh middleware crash na ho
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.error("Middleware: Supabase credentials missing!")
+    return response 
+  }
+
   const supabase = createServerClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    supabaseUrl,
+    supabaseAnonKey,
     {
       cookies: {
         get(name: string) {
@@ -55,19 +65,23 @@ export async function updateSession(request: NextRequest) {
     }
   )
 
-  // Refresh session if expired
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  // 3. User fetch ko try-catch mein rakhen taake network error se middleware na phate
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
 
-  // Protected routes
-  const protectedPaths = ['/admin', '/teacher', '/dashboard']
-  const isProtectedPath = protectedPaths.some((path) =>
-    request.nextUrl.pathname.startsWith(path)
-  )
+    // Protected routes logic
+    const protectedPaths = ['/admin', '/teacher', '/dashboard']
+    const isProtectedPath = protectedPaths.some((path) =>
+      request.nextUrl.pathname.startsWith(path)
+    )
 
-  if (isProtectedPath && !user) {
-    return NextResponse.redirect(new URL('/login', request.url))
+    if (isProtectedPath && !user) {
+      return NextResponse.redirect(new URL('/login', request.url))
+    }
+  } catch (e) {
+    console.error("Auth error in middleware:", e)
   }
 
   return response
