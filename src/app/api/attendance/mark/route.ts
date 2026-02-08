@@ -39,17 +39,22 @@ export async function POST(request: NextRequest) {
     }
 
     // --- LOGIC STARTS HERE ---
+	const dateStr = session.date; 
+
+// "YYYY-MM-DDTHH:mm:00" format JS ko batata hai ke ye LOCAL time hai
+const sessionStart = new Date(`${dateStr}T${session.start_time}:00`);
+const sessionEnd = new Date(`${dateStr}T${session.end_time}:00`);
+	
     const now = new Date()
     
+	// Debugging ke liye (Vercel logs mein check karne ke liye)
+console.log("Current Time (Now):", now.toLocaleString());
+console.log("Session Start:", sessionStart.toLocaleString());
+
     // Session timings ko Date objects mein convert karein (Timezone safe way)
     const [sH, sM] = session.start_time.split(':').map(Number)
     const [eH, eM] = session.end_time.split(':').map(Number)
     
-    const sessionStart = new Date(session.date)
-    sessionStart.setHours(sH, sM, 0, 0)
-    
-    const sessionEnd = new Date(session.date)
-    sessionEnd.setHours(eH, eM, 0, 0)
 
     // 1. Check correct date
     if (sessionStart.toDateString() !== now.toDateString()) {
@@ -95,6 +100,14 @@ export async function POST(request: NextRequest) {
       status = 'late'
     }
 
+// Is line ko error check ke baad add karein
+return NextResponse.json({ 
+  debug: true,
+  currentTime: new Date().toISOString(),
+  sessionStartTime: session.start_time,
+  sessionDate: session.date,
+  composedDate: `${session.date}T${session.start_time}:00`
+});
     // 7. Mark Attendance
     const { error: attendanceError } = await supabase
       .from('attendance_logs')
