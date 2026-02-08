@@ -25,143 +25,77 @@ interface ScanResult {
 export default function ScannerClient() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const supabase = createClient()
+  const html5QrCodeRef = useRef<Html5Qrcode | null>(null)
   
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const streamRef = useRef<MediaStream | null>(null)
-  const scanIntervalRef = useRef<NodeJS.Timeout | null>(null)
-  
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [scanning, setScanning] = useState(true)
   const [scanResult, setScanResult] = useState<ScanResult | null>(null)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [hasCameraAccess, setHasCameraAccess] = useState<boolean>(false)
   const [errorMessage, setErrorMessage] = useState<string>('')
   const [useFrontCamera, setUseFrontCamera] = useState<boolean>(false)
-  const [cameraCount, setCameraCount] = useState<number>(0)
 
+  // 1. Initialize Session
   useEffect(() => {
     const sessionIdParam = searchParams.get('session')
-    if (sessionIdParam) {
-      setSessionId(sessionIdParam)
-    }
-    setLoading(false)
+    if (sessionIdParam) setSessionId(sessionIdParam)
   }, [searchParams])
 
-  const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop())
-      streamRef.current = null
-    }
-    if (scanIntervalRef.current) {
-      clearInterval(scanIntervalRef.current)
-      scanIntervalRef.current = null
-    }
-  }
-
-  const requestCameraAccess = async () => {
+  // 2. Beep Sound Function
+  const playBeep = () => {
     try {
-      setScanResult(null)
-      setErrorMessage('')
-      
-      const devices = await navigator.mediaDevices.enumerateDevices()
-      const videoDevices = devices.filter(device => device.kind === 'videoinput')
-      setCameraCount(videoDevices.length)
-
-      if (videoDevices.length === 0) {
-        setErrorMessage('No camera found on this device.')
-        return
-      }
-
-      const constraints: MediaStreamConstraints = {
-        video: {
-          facingMode: useFrontCamera ? 'user' : 'environment',
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        }
-      }
-
-      const stream = await navigator.mediaDevices.getUserMedia(constraints)
-      streamRef.current = stream
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        videoRef.current.setAttribute('playsinline', '')
-        videoRef.current.play()
-        
-        videoRef.current.onloadedmetadata = () => {
-          setHasCameraAccess(true)
-          startScanning()
-        }
-      }
-    } catch (error: any) {
-      console.error('Camera error:', error)
-      setHasCameraAccess(false)
-      if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-        setErrorMessage('Camera permission denied. Please enable camera access in your browser settings.')
-      } else {
-        setErrorMessage(`Camera error: ${error.message || error.name}`)
-      }
-    }
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)()
+      const osc = audioCtx.createOscillator()
+      const gain = audioCtx.createGain()
+      osc.connect(gain)
+      gain.connect(audioCtx.destination)
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(880, audioCtx.currentTime)
+      gain.gain.setValueAtTime(0.1, audioCtx.currentTime)
+      osc.start()
+      osc.stop(audioCtx.currentTime + 0.1)
+    } catch (e) { console.error("Audio error", e) }
   }
 
+  // 3. Start/Stop Scanner Engine
   useEffect(() => {
-    requestCameraAccess()
-    return () => stopCamera()
-  }, [useFrontCamera])
+    if (!sessionId || !scanning || scanResult) return
 
- const startScanning = () => {
-  if (!canvasRef.current || !videoRef.current) return
-  const canvas = canvasRef.current
-  const video = videoRef.current
-  const ctx = canvas.getContext('2d', { willReadFrequently: true }) // Performance booster
-  if (!ctx) return
+    const scanner = new Html5Qrcode("reader")
+    html5QrCodeRef.current = scanner
 
-  canvas.width = video.videoWidth
-  canvas.height = video.videoHeight
+    const config = { 
+      fps: 10, 
+      qrbox: { width: 250, height: 250 },
+      aspectRatio: 1.0 // Square box looks better on mobile
+    }
 
-  // Scanner instance ki zaroorat nahi, sirf static decoder use karenge
-  const html5QrCode = new Html5Qrcode("reader-hidden"); // Ek dummy hidden div ID chahiye hogi
+    scanner.start(
+      { facingMode: useFrontCamera ? "user" : "environment" },
+      config,
+      (decodedText) => {
+        handleQRCodeDetected(decodedText)
+      },
+      (error) => { /* Scanning... */ }
+    )
+    .then(() => setHasCameraAccess(true))
+    .catch((err) => {
+      console.error(err)
+      setErrorMessage("Camera access failed. Please ensure you are on HTTPS and have granted permissions.")
+    })
 
-  scanIntervalRef.current = setInterval(async () => {
-    if (!scanning) return
-    try {
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-      
-      // html5-qrcode canvas se direct scan karne ka behtar tareeqa deta hai
-      // Lekin agar aap image data use karna chahte hain:
-      const dataUrl = canvas.toDataURL('image/jpeg');
-      
-      // scanImage method use karein (ye Promise return karta hai)
-      const qrCodeInstance = new Html5Qrcode("reader-hidden-id"); 
-      // Note: Humne neeche UI mein ek hidden div add karni hai
-      
-      const decodedText = await qrCodeInstance.scanFileV2(canvas.toDataURL());
-      if (decodedText) {
-        handleQRCodeDetected(decodedText.decodedText);
+    return () => {
+      if (html5QrCodeRef.current?.isScanning) {
+        html5QrCodeRef.current.stop().catch(e => console.error(e))
       }
-    } catch (error) {
-      // No QR code found, ignore error
     }
-  }, 300); // 300ms interval behtar hai battery ke liye
-}
-
-  const stopScanning = () => {
-    if (scanIntervalRef.current) {
-      clearInterval(scanIntervalRef.current)
-      scanIntervalRef.current = null
-    }
-    setScanning(false)
-  }
-
-  const resumeScanning = () => {
-    setScanning(true)
-    startScanning()
-  }
+  }, [sessionId, scanning, useFrontCamera, scanResult])
 
   const handleQRCodeDetected = async (qrData: string) => {
-    stopScanning()
+    if (html5QrCodeRef.current?.isScanning) {
+      await html5QrCodeRef.current.stop()
+    }
+    setScanning(false)
     await processQRCode(qrData)
   }
 
@@ -177,109 +111,115 @@ export default function ScannerClient() {
         }),
       })
       const result = await response.json()
+      
       if (response.ok) {
+        playBeep()
         setScanResult({
           success: true,
-          message: result.message || 'Attendance marked successfully!',
+          message: result.message || 'Attendance marked!',
           student: result.student,
           status: result.status,
         })
+        // Auto-restart after 5 seconds on success
+        setTimeout(() => handleContinue(), 5000)
       } else {
-        setScanResult({ success: false, message: result.error || 'Failed to mark attendance' })
+        setScanResult({ success: false, message: result.error || 'Invalid QR Code' })
+        // Auto-restart after 2 seconds on failure
+        setTimeout(() => handleContinue(), 2000)
       }
     } catch (error) {
-      setScanResult({ success: false, message: 'An error occurred while processing the QR code' })
+      setScanResult({ success: false, message: 'Network Error' })
+      setTimeout(() => handleContinue(), 2000)
     } finally {
       setLoading(false)
     }
   }
 
-  const handleSwitchCamera = () => {
-    setUseFrontCamera(!useFrontCamera)
-    stopCamera()
-  }
-
-  const handleManualInput = () => {
-    const admissionNumber = prompt('Enter Admission Number (for demo purposes):')
-    if (admissionNumber) {
-      processQRCode(admissionNumber)
-    }
-  }
-
   const handleContinue = () => {
     setScanResult(null)
-    resumeScanning()
+    setScanning(true)
   }
 
-  const handleBack = () => {
-    stopCamera()
+  const handleSwitchCamera = () => {
+    setUseFrontCamera(!useFrontCamera)
+  }
+
+  const handleBack = async () => {
+    if (html5QrCodeRef.current?.isScanning) {
+      await html5QrCodeRef.current.stop()
+    }
     router.back()
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900">
-      <header className="border-b bg-white/80 dark:bg-slate-950/80 backdrop-blur-sm sticky top-0 z-10">
-        <div className="container mx-auto px-4 py-4 text-foreground flex items-center justify-between">
-          <div className="flex items-center gap-4">
+    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950">
+      <header className="border-b bg-white dark:bg-slate-900 sticky top-0 z-10">
+        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-4 text-foreground">
             <Button variant="ghost" size="sm" onClick={handleBack}><ArrowLeft className="h-4 w-4" /></Button>
             <div>
-              <h1 className="text-xl font-bold">QR Scanner</h1>
-              <p className="text-sm text-muted-foreground">{sessionId ? 'Scan student ID cards' : 'Select a session first'}</p>
+              <h1 className="text-xl font-bold">Attendance Scan</h1>
+              <p className="text-xs text-muted-foreground">{sessionId ? 'Ready to scan' : 'No Session'}</p>
             </div>
           </div>
-          <Button variant="ghost" size="sm" onClick={() => router.push('/teacher')}><X className="h-4 w-4" /></Button>
+          <X className="h-5 w-5 text-muted-foreground cursor-pointer" onClick={() => router.push('/teacher')} />
         </div>
       </header>
 
-      <main className="flex-1 container mx-auto px-4 py-8 flex items-center justify-center">
-        <Card className="w-full max-w-2xl">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2"><QrCode className="h-6 w-6" /> Scan Attendance QR Code</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {!sessionId && <Alert><AlertTriangle className="h-4 w-4" /><AlertDescription>No active session selected.</AlertDescription></Alert>}
-            {sessionId && errorMessage && <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertDescription>{errorMessage}</AlertDescription></Alert>}
-            
-            {sessionId && scanning && hasCameraAccess && (
+      <main className="flex-1 container mx-auto px-4 py-8 flex flex-col items-center">
+        <Card className="w-full max-w-md border-none shadow-lg">
+          <CardContent className="pt-6 space-y-4">
+            {errorMessage && (
+              <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertDescription>{errorMessage}</AlertDescription></Alert>
+            )}
+
+            {/* Scanner Viewport */}
+            {sessionId && scanning && (
               <div className="space-y-4">
-                <div className="relative aspect-video bg-black rounded-lg overflow-hidden">
-                   <video ref={videoRef} className="w-full h-full object-cover rounded-lg" playsInline muted
-  autoPlay />
-                   <canvas ref={canvasRef} className="hidden" />
-                   <div className="absolute inset-0 pointer-events-none border-4 border-white/20">
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <div className="w-full h-1 bg-red-500/80 animate-pulse" />
-                      </div>
-                   </div>
-                </div>
-				<div id="reader-hidden-id" className="hidden"></div>
-                <div className="flex gap-2 justify-center">
-                  <Button variant="outline" size="sm" onClick={handleSwitchCamera} disabled={cameraCount <= 1}>
-                    <RefreshCw className="h-4 w-4 mr-2" /> Switch Camera ({cameraCount})
-                  </Button>
-                </div>
-                <Button onClick={handleManualInput} variant="outline" className="w-full">Manual Input (Demo)</Button>
+                <div id="reader" className="overflow-hidden rounded-2xl bg-black aspect-square"></div>
+                <Button variant="outline" className="w-full py-6" onClick={handleSwitchCamera}>
+                  <RefreshCw className="mr-2 h-4 w-4" /> Flip Camera
+                </Button>
               </div>
             )}
 
-            {!scanning && scanResult && (
-              <div className="space-y-4 text-foreground">
-                <Alert className={scanResult.success ? "bg-green-50" : "bg-red-50"}>
-                  {scanResult.success ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
-                  <AlertDescription>{scanResult.message}</AlertDescription>
-                </Alert>
+            {/* Loading State */}
+            {loading && (
+              <div className="text-center py-10 space-y-4">
+                <Loader2 className="h-12 w-12 animate-spin mx-auto text-primary" />
+                <p className="text-foreground font-medium">Verifying Record...</p>
+              </div>
+            )}
+
+            {/* Scan Results (Auto-hides) */}
+            {!scanning && scanResult && !loading && (
+              <div className="space-y-4 animate-in fade-in zoom-in duration-300">
+                <div className={`p-6 rounded-2xl text-center ${scanResult.success ? 'bg-green-100 dark:bg-green-900/30' : 'bg-red-100 dark:bg-red-900/30'}`}>
+                  {scanResult.success ? 
+                    <CheckCircle2 className="h-12 w-12 text-green-600 mx-auto mb-2" /> : 
+                    <XCircle className="h-12 w-12 text-red-600 mx-auto mb-2" />
+                  }
+                  <p className={`font-bold text-lg ${scanResult.success ? 'text-green-800 dark:text-green-200' : 'text-red-800 dark:text-red-200'}`}>
+                    {scanResult.message}
+                  </p>
+                </div>
+
                 {scanResult.student && (
-                  <div className="p-4 bg-muted rounded-lg">
-                    <p className="text-lg font-bold">{scanResult.student.full_name}</p>
-                    <p>ID: {scanResult.student.admission_number}</p>
-                    <Badge className="mt-2">{scanResult.status?.toUpperCase()}</Badge>
+                  <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
+                    <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Student Details</p>
+                    <p className="text-xl font-bold text-foreground">{scanResult.student.full_name}</p>
+                    <div className="flex justify-between mt-2">
+                      <p className="text-sm text-muted-foreground">ID: {scanResult.student.admission_number}</p>
+                      <Badge variant="outline">{scanResult.student.class}-{scanResult.student.section}</Badge>
+                    </div>
                   </div>
                 )}
-                <Button onClick={handleContinue} className="w-full">Scan Next</Button>
+                
+                <p className="text-center text-xs text-muted-foreground animate-pulse">
+                  Restarting scanner automatically...
+                </p>
               </div>
             )}
-
-            {loading && <div className="text-center py-12 text-foreground"><Loader2 className="h-12 w-12 animate-spin mx-auto" /><p>Processing...</p></div>}
           </CardContent>
         </Card>
       </main>
