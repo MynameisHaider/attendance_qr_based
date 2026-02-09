@@ -32,9 +32,8 @@ export async function POST(request: NextRequest) {
     const now = new Date()
     const pkTime = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Karachi" }))
     
-    // Format helpers for comparison
-    const todayStr = pkTime.toISOString().split('T')[0] // YYYY-MM-DD
-    const currentTimeStr = pkTime.toTimeString().slice(0, 5) // HH:MM
+    const todayStr = pkTime.toISOString().split('T')[0]
+    const currentTimeStr = pkTime.toTimeString().slice(0, 5)
 
     let session = null
 
@@ -46,7 +45,6 @@ export async function POST(request: NextRequest) {
         .single()
       session = sessionData
     } else {
-      // General scan: Find active session for today
       const { data: activeSession } = await supabase
         .from('attendance_sessions')
         .select('*')
@@ -62,8 +60,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No active session found' }, { status: 400 })
     }
 
-    // --- TIME & STATUS VALIDATION ---
-    
     // 1. Check Date
     if (session.date !== todayStr) {
       return NextResponse.json({ 
@@ -71,46 +67,39 @@ export async function POST(request: NextRequest) {
         details: `Today: ${todayStr}, Session: ${session.date}` 
       }, { status: 400 })
     }
-	//1b Allow 'scheduled' OR 'active' sessions
-	if (session.status !== 'active' && session.status !== 'scheduled') {
-	return NextResponse.json({ 
-	error: 'Session is not open for attendance' },
-	{ status: 400 })
-}
-    // 2. Auto-Complete Logic (If scanned after end_time)
-    if (currentTimeStr > session.end_time) {
-      await supabase
-        .from('attendance_sessions')
-        .update({ status: 'completed' })
-        .eq('id', session.id)
 
-      return NextResponse.json({ error: 'Session has ended and is now closed' }, { status: 400 })
+    // 1b. Status Check
+    if (session.status !== 'active' && session.status !== 'scheduled') {
+      return NextResponse.json({ error: 'Session is not open for attendance' }, { status: 400 })
     }
-	
-	
-	// Mark remaining students as absent
-  const { data: allStudents } = await supabase.from('students').select('admission_number');
-  const { data: markedLogs } = await supabase.from('attendance_logs').select('student_id').eq('session_id', session.id);
-  
-  const markedIds = markedLogs?.map(l => l.student_id) || [];
-  const absentStudents = allStudents?.filter(s => !markedIds.includes(s.admission_number)) || [];
 
-  if (absentStudents.length > 0) {
-    const absentLogs = absentStudents.map(s => ({
-      student_id: s.admission_number,
-      session_id: session.id,
-      date: session.date,
-      status: 'absent',
-      marked_by: user.id,
-      scan_time: pkTime.toISOString()
-    }));
-    await supabase.from('attendance_logs').insert(absentLogs);
-  }
+    // 2. Auto-Complete & Absent Marking (ONLY if time is over)
+    if (currentTimeStr > session.end_time) {
+      await supabase.from('attendance_sessions').update({ status: 'completed' }).eq('id', session.id)
 
-  return NextResponse.json({ error: 'Session has ended. Absent students marked.' }, { status: 400 });
-}
+      const { data: allStudents } = await supabase.from('students').select('admission_number')
+      const { data: markedLogs } = await supabase.from('attendance_logs').select('student_id').eq('session_id', session.id)
+      
+      const markedIds = markedLogs?.map(l => l.student_id) || []
+      const absentStudents = allStudents?.filter(s => !markedIds.includes(s.admission_number)) || []
 
-    // 3. Start Time Check (with 5 min buffer for convenience)
+      if (absentStudents.length > 0) {
+        const absentLogs = absentStudents.map(s => ({
+          student_id: s.admission_number,
+          session_id: session.id,
+          date: session.date,
+          status: 'absent',
+          marked_by: user.id,
+          scan_time: pkTime.toISOString()
+        }))
+        await supabase.from('attendance_logs').insert(absentLogs)
+      }
+
+      // Yeh return ab bracket ke andar hai, taake sirf expiry par chale
+      return NextResponse.json({ error: 'Session has ended. Absent students marked.' }, { status: 400 })
+    }
+
+    // 3. Start Time Check
     const [sH, sM] = session.start_time.split(':').map(Number)
     const sessionStart = new Date(pkTime)
     sessionStart.setHours(sH, sM, 0, 0)
@@ -134,7 +123,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Attendance already marked' }, { status: 400 })
     }
 
-    // 5. Determine Status (Late after 10 mins)
+    // 5. Determine Status
     let attendanceStatus: 'present' | 'late' = 'present'
     if (pkTime.getTime() > (sessionStart.getTime() + 10 * 60 * 1000)) {
       attendanceStatus = 'late'
@@ -156,12 +145,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to mark attendance' }, { status: 500 })
     }
 
-    // 6. Auto-Activate Session on first scan
+    // 6. Auto-Activate Session
     if (session.status === 'scheduled') {
-      await supabase
-        .from('attendance_sessions')
-        .update({ status: 'active' })
-        .eq('id', session.id)
+      await supabase.from('attendance_sessions').update({ status: 'active' }).eq('id', session.id)
     }
 
     return NextResponse.json({
