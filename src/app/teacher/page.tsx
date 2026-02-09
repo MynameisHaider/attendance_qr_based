@@ -205,7 +205,7 @@ export default function TeacherDashboard() {
                       Point the camera at a student's QR code
                     </p>
                   </div>
-                  <Link href="/teacher/scan">
+                  <Link href="/teacher/scan?session=${session.id}">
                     <Button size="lg">Start Scanner</Button>
                   </Link>
                 </div>
@@ -281,7 +281,7 @@ export default function TeacherDashboard() {
                             <Button size="sm">Scan Attendance</Button>
                           </Link>
                         )}
-                        <Link href={`/teacher/sessions/${session.id}`}>
+                        <Link href={`/teacher/${session.id}`}>
                           <Button size="sm" variant="outline">View Details</Button>
                         </Link>
                       </div>

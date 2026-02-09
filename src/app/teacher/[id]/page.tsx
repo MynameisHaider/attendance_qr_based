@@ -167,7 +167,7 @@ export default function SessionDetailPage() {
       <header className="border-b bg-white/80 dark:bg-slate-950/80 backdrop-blur-sm">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center gap-4">
-            <Link href="/admin/sessions">
+            <Link href="/teacher">
               <Button variant="ghost" size="sm">
                 <ArrowLeft className="h-4 w-4" />
               </Button>
