@@ -41,46 +41,69 @@ export default function TeacherDashboard() {
     excused: 0,
   })
 
-  const fetchSessions = async () => {
-    try {
-      const today = new Date().toISOString().split('T')[0]
-      const { data } = await supabase
-        .from('attendance_sessions')
-        .select('*')
-        .gte('date', today)
-        .order('date', { ascending: true })
-        .limit(10)
+ const fetchSessions = async () => {
+  try {
+    // 1. Force Pakistan Date
+    const pkDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Karachi" }));
+    const today = pkDate.toISOString().split('T')[0];
 
-      if (data) {
-        setSessions(data)
-      }
-    } catch (error) {
-      console.error('Error fetching sessions:', error)
+    const { data } = await supabase
+      .from('attendance_sessions')
+      .select('*')
+      .eq('date', today) // Ab ye sahi date se filter karega
+      .order('date', { ascending: true })
+      .order('start_time', { ascending: true }) // Start time se bhi order karein
+      .limit(10);
+
+    if (data) {
+      setSessions(data);
     }
+  } catch (error) {
+    console.error('Error fetching sessions:', error);
   }
+};
 
-  const fetchTodayStats = async () => {
-    try {
-      const today = new Date().toISOString().split('T')[0]
-      const { data: logs } = await supabase
-        .from('attendance_logs')
-        .select('status')
-        .eq('date', today)
+ const fetchTodayStats = async () => {
+  try {
+    // 1. Sahi Date nikaalna (Pakistan Time)
+    const pkDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Karachi" }))
+    const today = pkDate.toISOString().split('T')[0]
 
-      if (logs) {
-        const stats: AttendanceStats = {
-          total: logs.length,
-          present: logs.filter(l => l.status === 'present').length,
-          absent: logs.filter(l => l.status === 'absent').length,
-          late: logs.filter(l => l.status === 'late').length,
-          excused: logs.filter(l => l.status === 'excused').length,
-        }
-        setTodayStats(stats)
+    // 2. Total Students ki count alag se lein
+    const { count: totalStudentsCount } = await supabase
+      .from('students')
+      .select('*', { count: 'exact', head: true })
+
+    // 3. Aaj ke logs lein
+    const { data: logs } = await supabase
+      .from('attendance_logs')
+      .select('status')
+      .eq('date', today)
+
+    if (logs && totalStudentsCount !== null) {
+      const present = logs.filter(l => l.status === 'present').length
+      const late = logs.filter(l => l.status === 'late').length
+      const excused = logs.filter(l => l.status === 'excused').length
+      const markedAbsent = logs.filter(l => l.status === 'absent').length
+
+      // Real-time calculation: 
+      // Agar session chal raha hai to "Absent" wo hain jinhone abhi tak scan nahi kiya
+      const totalScanned = present + late + excused + markedAbsent
+      const autoAbsent = totalStudentsCount - totalScanned
+
+      const stats = {
+        total: totalStudentsCount, // Ab ye hamesha 8 dikhayega
+        present: present,
+        absent: markedAbsent > 0 ? markedAbsent : autoAbsent, // Agar end ho gaya to marked, warna remaining
+        late: late,
+        excused: excused,
       }
-    } catch (error) {
-      console.error('Error fetching stats:', error)
+      setTodayStats(stats)
     }
+  } catch (error) {
+    console.error('Error fetching stats:', error)
   }
+}
 
   useEffect(() => {
     const checkAuth = async () => {

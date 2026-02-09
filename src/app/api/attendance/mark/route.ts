@@ -71,7 +71,12 @@ export async function POST(request: NextRequest) {
         details: `Today: ${todayStr}, Session: ${session.date}` 
       }, { status: 400 })
     }
-
+	//1b Allow 'scheduled' OR 'active' sessions
+	if (session.status !== 'active' && session.status !== 'scheduled') {
+	return NextResponse.json({ 
+	error: 'Session is not open for attendance' },
+	{ status: 400 })
+}
     // 2. Auto-Complete Logic (If scanned after end_time)
     if (currentTimeStr > session.end_time) {
       await supabase
@@ -81,6 +86,29 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({ error: 'Session has ended and is now closed' }, { status: 400 })
     }
+	
+	
+	// Mark remaining students as absent
+  const { data: allStudents } = await supabase.from('students').select('admission_number');
+  const { data: markedLogs } = await supabase.from('attendance_logs').select('student_id').eq('session_id', session.id);
+  
+  const markedIds = markedLogs?.map(l => l.student_id) || [];
+  const absentStudents = allStudents?.filter(s => !markedIds.includes(s.admission_number)) || [];
+
+  if (absentStudents.length > 0) {
+    const absentLogs = absentStudents.map(s => ({
+      student_id: s.admission_number,
+      session_id: session.id,
+      date: session.date,
+      status: 'absent',
+      marked_by: user.id,
+      scan_time: pkTime.toISOString()
+    }));
+    await supabase.from('attendance_logs').insert(absentLogs);
+  }
+
+  return NextResponse.json({ error: 'Session has ended. Absent students marked.' }, { status: 400 });
+}
 
     // 3. Start Time Check (with 5 min buffer for convenience)
     const [sH, sM] = session.start_time.split(':').map(Number)
@@ -128,7 +156,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to mark attendance' }, { status: 500 })
     }
 
-    // 6. Set status to 'active' if it was 'scheduled'
+    // 6. Auto-Activate Session on first scan
     if (session.status === 'scheduled') {
       await supabase
         .from('attendance_sessions')
