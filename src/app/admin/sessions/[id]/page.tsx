@@ -7,7 +7,10 @@ import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { ArrowLeft, Calendar, Users, Edit, Trash2, UserCheck, Loader2 } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { ArrowLeft, Calendar, Users, Edit, Trash2, UserCheck, Loader2, CheckCircle2 } from 'lucide-react'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 interface AttendanceSession {
   id: string
@@ -26,6 +29,14 @@ interface AttendanceLog {
   section: string
   status: 'present' | 'absent' | 'late' | 'excused'
   scan_time: string
+  reason?: string | null
+}
+
+interface Student {
+  admission_number: string
+  full_name: string
+  class: string
+  section: string
 }
 
 export default function SessionDetailPage() {
@@ -35,6 +46,9 @@ export default function SessionDetailPage() {
   const [loading, setLoading] = useState(true)
   const [session, setSession] = useState<AttendanceSession | null>(null)
   const [attendanceLogs, setAttendanceLogs] = useState<AttendanceLog[]>([])
+  const [allStudents, setAllStudents] = useState<Student[]>([])
+  const [autoCompleted, setAutoCompleted] = useState(false)
+  const [excusedInput, setExcusedInput] = useState<{ [key: string]: string }>({})
 
   useEffect(() => {
     if (params.id) {
@@ -58,6 +72,41 @@ export default function SessionDetailPage() {
 
       setSession(sessionData)
 
+      // Check if session should be auto-completed (Asia/Karachi timezone)
+      const now = new Date()
+      const currentTime = now.toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+        timeZone: 'Asia/Karachi'
+      })
+      const sessionDate = new Date(sessionData.date).toLocaleDateString('en-CA', { timeZone: 'Asia/Karachi' })
+
+      // If session is active and time has passed, auto-complete it
+      if (sessionData.status === 'active' && currentTime > sessionData.end_time) {
+        await autoCompleteSession(sessionId)
+        setAutoCompleted(true)
+        // Reload session data
+        const { data: updatedSession } = await supabase
+          .from('attendance_sessions')
+          .select('*')
+          .eq('id', sessionId)
+          .single()
+        if (updatedSession) {
+          setSession(updatedSession)
+        }
+      }
+
+      // Get all students
+      const { data: studentsData } = await supabase
+        .from('students')
+        .select('*')
+        .order('full_name', { ascending: true })
+
+      if (studentsData) {
+        setAllStudents(studentsData)
+      }
+
       // Get attendance logs for this session
       const { data: logsData } = await supabase
         .from('attendance_report')
@@ -71,6 +120,79 @@ export default function SessionDetailPage() {
       console.error('Error fetching session details:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const autoCompleteSession = async (sessionId: string) => {
+    try {
+      const now = new Date().toISOString()
+
+      // Get already scanned students
+      const { data: existingLogs } = await supabase
+        .from('attendance_logs')
+        .select('student_id')
+        .eq('session_id', sessionId)
+
+      const scannedStudentIds = new Set(existingLogs?.map(l => l.student_id) || [])
+
+      // Get all students
+      const { data: allStudentsData } = await supabase
+        .from('students')
+        .select('*')
+
+      if (allStudentsData) {
+        // Only insert absent for students who weren't scanned
+        const absentStudents = allStudentsData.filter(s => !scannedStudentIds.has(s.admission_number))
+
+        if (absentStudents.length > 0) {
+          await supabase
+            .from('attendance_logs')
+            .insert(
+              absentStudents.map(s => ({
+                student_id: s.admission_number,
+                session_id: sessionId,
+                date: session?.date || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Karachi' }),
+                status: 'absent',
+                scan_time: now,
+                marked_by: session?.created_by || '',
+              }))
+            )
+        }
+
+        // Mark session as completed
+        await supabase
+          .from('attendance_sessions')
+          .update({ status: 'completed' })
+          .eq('id', sessionId)
+      }
+    } catch (error) {
+      console.error('Auto-complete session error:', error)
+    }
+  }
+
+  const handleMarkAsExcused = async (logId: string) => {
+    try {
+      const response = await fetch('/api/attendance/mark-excused', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          logId,
+          reason: excusedInput[logId]
+        })
+      })
+
+      const data = await response.json()
+
+      if (response.ok) {
+        // Refresh attendance logs
+        await fetchSessionDetails(session!.id)
+        setExcusedInput({ ...excusedInput, [logId]: '' })
+      } else {
+        alert(data.error || 'Failed to mark as excused')
+      }
+    } catch (error) {
+      console.error('Mark excused error:', error)
+      alert('Failed to mark as excused')
     }
   }
 
@@ -124,13 +246,27 @@ export default function SessionDetailPage() {
   }
 
   const getStats = () => {
+    // Total = all students in database
+    const total = allStudents.length
+
+    // Present = students who scanned (present or late)
+    const present = attendanceLogs.filter(l => l.status === 'present' || l.status === 'late').length
+
+    // Absent = students who didn't scan
+    const absent = total - present
+
     return {
-      total: attendanceLogs.length,
-      present: attendanceLogs.filter(l => l.status === 'present').length,
-      absent: attendanceLogs.filter(l => l.status === 'absent').length,
+      total,
+      present,
+      absent,
       late: attendanceLogs.filter(l => l.status === 'late').length,
       excused: attendanceLogs.filter(l => l.status === 'excused').length,
     }
+  }
+
+  const getAbsentStudents = () => {
+    const scannedStudentIds = new Set(attendanceLogs.map(l => l.student_id))
+    return allStudents.filter(s => !scannedStudentIds.has(s.admission_number))
   }
 
   if (loading) {
@@ -160,6 +296,12 @@ export default function SessionDetailPage() {
   }
 
   const stats = getStats()
+  const absentStudents = getAbsentStudents()
+  const currentTime = new Date().toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Karachi'
+  })
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900">
@@ -183,6 +325,15 @@ export default function SessionDetailPage() {
       {/* Main Content */}
       <main className="flex-1 container mx-auto px-4 py-8">
         <div className="max-w-6xl mx-auto space-y-6">
+          {autoCompleted && (
+            <Alert className="bg-yellow-50 dark:bg-yellow-950/20 border-yellow-200 dark:border-yellow-800">
+              <CheckCircle2 className="h-4 w-4 mr-2" />
+              <AlertDescription>
+                Session has been auto-completed because end time has passed. All absent students have been marked.
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* Session Info Card */}
           <Card>
             <CardHeader>
@@ -197,7 +348,8 @@ export default function SessionDetailPage() {
                       weekday: 'long',
                       year: 'numeric',
                       month: 'long',
-                      day: 'numeric'
+                      day: 'numeric',
+                      timeZone: 'Asia/Karachi'
                     })}
                   </CardDescription>
                 </div>
@@ -223,6 +375,11 @@ export default function SessionDetailPage() {
                   <span className="text-muted-foreground">End Time:</span>
                   <span className="font-medium">{session.end_time}</span>
                 </div>
+                <div className="flex items-center gap-2">
+                  <Calendar className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-muted-foreground">Current Time (Karachi):</span>
+                  <span className="font-medium">{currentTime}</span>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -235,14 +392,14 @@ export default function SessionDetailPage() {
                 Attendance Statistics
               </CardTitle>
               <CardDescription>
-                Summary for this session
+                Total students in database: {allStudents.length}
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                 <div className="space-y-2">
                   <div className="text-3xl font-bold text-foreground">{stats.total}</div>
-                  <div className="text-sm text-muted-foreground">Total</div>
+                  <div className="text-sm text-muted-foreground">Total Students</div>
                 </div>
                 <div className="space-y-2">
                   <div className="text-3xl font-bold text-green-600">{stats.present}</div>
@@ -256,32 +413,28 @@ export default function SessionDetailPage() {
                   <div className="text-3xl font-bold text-yellow-600">{stats.late}</div>
                   <div className="text-sm text-muted-foreground">Late</div>
                 </div>
+                <div className="space-y-2">
+                  <div className="text-3xl font-bold text-blue-600">{stats.excused}</div>
+                  <div className="text-sm text-muted-foreground">Excused</div>
+                </div>
               </div>
             </CardContent>
           </Card>
 
-          {/* Attendance Logs */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Users className="h-6 w-6" />
-                Attendance Records
-              </CardTitle>
-              <CardDescription>
-                {attendanceLogs.length} students marked
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {attendanceLogs.length === 0 ? (
-                <div className="text-center py-12">
-                  <Users className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
-                  <h3 className="text-lg font-semibold mb-2">No Attendance Records</h3>
-                  <p className="text-sm text-muted-foreground">
-                    No students have attended this session yet
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-2 max-h-[500px] overflow-y-auto">
+          {/* Present/Late Students */}
+          {attendanceLogs.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Users className="h-6 w-6" />
+                  Present / Late Students
+                </CardTitle>
+                <CardDescription>
+                  {attendanceLogs.length} students attended
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2 max-h-[400px] overflow-y-auto">
                   {attendanceLogs.map((log) => (
                     <div
                       key={log.id}
@@ -314,20 +467,102 @@ export default function SessionDetailPage() {
                           {log.status.toUpperCase()}
                         </Badge>
                         <div className="text-sm text-muted-foreground">
-                         {new Date(log.scan_time).toLocaleTimeString('en-GB', {
-  timeZone: 'Asia/Karachi',
-  hour: '2-digit',
-  minute: '2-digit',
-  hour12: true // AM/PM ke liye
-})}
+                          {new Date(log.scan_time).toLocaleTimeString('en-US', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            timeZone: 'Asia/Karachi'
+                          })}
                         </div>
                       </div>
                     </div>
                   ))}
                 </div>
-              )}
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Absent Students */}
+          {session.status === 'completed' && absentStudents.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Users className="h-6 w-6" />
+                  Absent Students ({absentStudents.length})
+                </CardTitle>
+                <CardDescription>
+                  Mark as excused/leave if student had permission
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2 max-h-[500px] overflow-y-auto">
+                  {absentStudents.map((student) => (
+                    <div
+                      key={student.admission_number}
+                      className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-3">
+                          <div className="flex-shrink-0">
+                            <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
+                              <span className="text-sm font-medium text-primary">
+                                {student.full_name.split(' ').map(n => n[0]).join('').slice(0, 2)}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-semibold truncate">{student.full_name}</h4>
+                            <div className="text-sm text-muted-foreground">
+                              <span>Adm: {student.admission_number}</span>
+                              <span className="mx-2">•</span>
+                              <span>{student.class} - {student.section}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-red-600">
+                          ABSENT
+                        </Badge>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setExcusedInput({ ...excusedInput, [student.admission_number]: excusedInput[student.admission_number] || '' })
+                          }}
+                        >
+                          Mark Excused
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {session.status === 'completed' && absentStudents.length > 0 && Object.keys(excusedInput).length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Submit Excused Marks</CardTitle>
+                <CardDescription>Add reason for excused students (optional)</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button
+                  onClick={() => {
+                    // Mark all as excused
+                    Object.keys(excusedInput).forEach(async (studentId) => {
+                      const log = attendanceLogs.find(l => l.student_id === studentId)
+                      if (log && log.status === 'absent') {
+                        await handleMarkAsExcused(log.id)
+                      }
+                    })
+                  }}
+                  >
+                    Mark All as Excused
+                  </Button>
+              </CardContent>
+            </Card>
+          )}
         </div>
       </main>
 
@@ -335,7 +570,7 @@ export default function SessionDetailPage() {
       <footer className="border-t bg-white/80 dark:bg-slate-950/80 backdrop-blur-sm mt-auto">
         <div className="container mx-auto px-4 py-4">
           <p className="text-sm text-muted-foreground text-center">
-            QR-Based School Attendance System • Session Details
+            QR-Based School Attendance System • Session Details (Asia/Karachi)
           </p>
         </div>
       </footer>
