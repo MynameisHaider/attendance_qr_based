@@ -41,69 +41,46 @@ export default function TeacherDashboard() {
     excused: 0,
   })
 
- const fetchSessions = async () => {
-  try {
-    // 1. Force Pakistan Date
-    const pkDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Karachi" }));
-    const today = pkDate.toISOString().split('T')[0];
+  const fetchSessions = async () => {
+    try {
+      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Karachi' })
+      const { data } = await supabase
+        .from('attendance_sessions')
+        .select('*')
+        .gte('date', today)
+        .order('date', { ascending: true })
+        .limit(10)
 
-    const { data } = await supabase
-      .from('attendance_sessions')
-      .select('*')
-      .eq('date', today) // Ab ye sahi date se filter karega
-      .order('date', { ascending: true })
-      .order('start_time', { ascending: true }) // Start time se bhi order karein
-      .limit(10);
-
-    if (data) {
-      setSessions(data);
-    }
-  } catch (error) {
-    console.error('Error fetching sessions:', error);
-  }
-};
-
- const fetchTodayStats = async () => {
-  try {
-    // 1. Sahi Date nikaalna (Pakistan Time)
-    const pkDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Karachi" }))
-    const today = pkDate.toISOString().split('T')[0]
-
-    // 2. Total Students ki count alag se lein
-    const { count: totalStudentsCount } = await supabase
-      .from('students')
-      .select('*', { count: 'exact', head: true })
-
-    // 3. Aaj ke logs lein
-    const { data: logs } = await supabase
-      .from('attendance_logs')
-      .select('status')
-      .eq('date', today)
-
-    if (logs && totalStudentsCount !== null) {
-      const present = logs.filter(l => l.status === 'present').length
-      const late = logs.filter(l => l.status === 'late').length
-      const excused = logs.filter(l => l.status === 'excused').length
-      const markedAbsent = logs.filter(l => l.status === 'absent').length
-
-      // Real-time calculation: 
-      // Agar session chal raha hai to "Absent" wo hain jinhone abhi tak scan nahi kiya
-      const totalScanned = present + late + excused + markedAbsent
-      const autoAbsent = totalStudentsCount - totalScanned
-
-      const stats = {
-        total: totalStudentsCount, // Ab ye hamesha 8 dikhayega
-        present: present,
-        absent: markedAbsent > 0 ? markedAbsent : autoAbsent, // Agar end ho gaya to marked, warna remaining
-        late: late,
-        excused: excused,
+      if (data) {
+        setSessions(data)
       }
-      setTodayStats(stats)
+    } catch (error) {
+      console.error('Error fetching sessions:', error)
     }
-  } catch (error) {
-    console.error('Error fetching stats:', error)
   }
-}
+
+  const fetchTodayStats = async () => {
+    try {
+      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Karachi' })
+      const { data: logs } = await supabase
+        .from('attendance_logs')
+        .select('status')
+        .eq('date', today)
+
+      if (logs) {
+        const stats: AttendanceStats = {
+          total: logs.length,
+          present: logs.filter(l => l.status === 'present').length,
+          absent: logs.filter(l => l.status === 'absent').length,
+          late: logs.filter(l => l.status === 'late').length,
+          excused: logs.filter(l => l.status === 'excused').length,
+        }
+        setTodayStats(stats)
+      }
+    } catch (error) {
+      console.error('Error fetching stats:', error)
+    }
+  }
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -130,6 +107,13 @@ export default function TeacherDashboard() {
     }
 
     checkAuth()
+
+    // Refresh stats every 5 seconds
+    const refreshInterval = setInterval(() => {
+      fetchTodayStats()
+    }, 5000)
+
+    return () => clearInterval(refreshInterval)
   }, [supabase, router])
 
   const handleLogout = async () => {
@@ -266,13 +250,14 @@ export default function TeacherDashboard() {
                     <CardHeader>
                       <div className="flex items-center justify-between">
                         <div>
-                          <CardTitle>Class {session.class} - Section {session.section}</CardTitle>
+                          <CardTitle>Attendance Session</CardTitle>
                           <CardDescription>
                             {new Date(session.date).toLocaleDateString('en-US', {
                               weekday: 'long',
                               year: 'numeric',
                               month: 'long',
-                              day: 'numeric'
+                              day: 'numeric',
+                              timeZone: 'Asia/Karachi'
                             })}
                           </CardDescription>
                         </div>
@@ -312,7 +297,7 @@ export default function TeacherDashboard() {
             <Card>
               <CardHeader>
                 <CardTitle>Today's Attendance</CardTitle>
-                <CardDescription>Real-time attendance summary</CardDescription>
+                <CardDescription>Real-time attendance summary for {new Date().toLocaleDateString('en-US', { timeZone: 'Asia/Karachi', month: 'long', day: 'numeric' })}</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -343,9 +328,7 @@ export default function TeacherDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="text-center py-8 text-muted-foreground">
-                  <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>No attendance records yet</p>
-                  <p className="text-sm">Start scanning QR codes to mark attendance</p>
+                  <p>Go to Sessions tab to view session details and complete attendance logs</p>
                 </div>
               </CardContent>
             </Card>

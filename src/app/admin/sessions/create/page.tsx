@@ -40,7 +40,7 @@ export default function CreateSessionPage() {
           date: formData.date,
           start_time: formData.startTime,
           end_time: formData.endTime,
-          status: 'scheduled',
+          status: 'active',
           created_by: user.id,
         })
 
