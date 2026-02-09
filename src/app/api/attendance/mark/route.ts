@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Student find karein
+    // 1. Student find karein
     const { data: student, error: studentError } = await supabase
       .from('students')
       .select('*')
@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Student not found' }, { status: 404 })
     }
 
-    // Session find karein
+    // 2. Session find karein
     const { data: session, error: sessionError } = await supabase
       .from('attendance_sessions')
       .select('*')
@@ -38,47 +38,52 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid session ID' }, { status: 400 })
     }
 
-    // --- LOGIC STARTS HERE ---
-	const dateStr = session.date; 
-
-// "YYYY-MM-DDTHH:mm:00" format JS ko batata hai ke ye LOCAL time hai
-const sessionStart = new Date(`${dateStr}T${session.start_time}:00`);
-const sessionEnd = new Date(`${dateStr}T${session.end_time}:00`);
-	
-    const now = new Date()
+    // --- TIMEZONE FIX LOGIC ---
     
-	// Debugging ke liye (Vercel logs mein check karne ke liye)
-console.log("Current Time (Now):", now.toLocaleString());
-console.log("Session Start:", sessionStart.toLocaleString());
-
-    // Session timings ko Date objects mein convert karein (Timezone safe way)
-    const [sH, sM] = session.start_time.split(':').map(Number)
-    const [eH, eM] = session.end_time.split(':').map(Number)
+    // Server ke time ko Pakistan time (PKT) mein convert karein
+    const now = new Date();
+    const pkTime = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Karachi" }));
     
+    // Session ki dates ko properly format karein taake comparison sahi ho
+    const dateStr = session.date; 
+    const sessionStart = new Date(`${dateStr}T${session.start_time}:00`);
+    const sessionEnd = new Date(`${dateStr}T${session.end_time}:00`);
 
-    // 1. Check correct date
-    if (sessionStart.toDateString() !== now.toDateString()) {
-      return NextResponse.json({ error: 'This session is not for today' }, { status: 400 })
+    // Aaj ki date (YYYY-MM-DD format) comparison ke liye
+    const todayStr = pkTime.toISOString().split('T')[0];
+
+    // 1. Date Check
+    if (session.date !== todayStr) {
+      return NextResponse.json({ 
+        error: 'This session is not for today',
+        details: `Today is ${todayStr}, Session is for ${session.date}`
+      }, { status: 400 });
     }
 
-    // 2. Start Time Check (with 5 min buffer)
-    const buffer = 5 * 60 * 1000 
-    if (now.getTime() < (sessionStart.getTime() - buffer)) {
+    // 2. Auto-Expiry Check (Agar end time guzar gaya)
+    if (pkTime.getTime() > sessionEnd.getTime()) {
+      // Database mein status 'completed' update karein taake UI mein bhi change ho jaye
+      await supabase
+        .from('attendance_sessions')
+        .update({ status: 'completed' })
+        .eq('id', session.id);
+
+      return NextResponse.json({ error: 'Session has ended automatically' }, { status: 400 });
+    }
+
+    // 3. Start Time Check (with 5 min buffer)
+    const buffer = 5 * 60 * 1000;
+    if (pkTime.getTime() < (sessionStart.getTime() - buffer)) {
       return NextResponse.json({ 
         error: 'Session has not started yet',
         details: `Starts at ${session.start_time}`
-      }, { status: 400 })
-    }
-
-    // 3. Auto-Expiry Check (End Time)
-    if (now.getTime() > sessionEnd.getTime()) {
-      return NextResponse.json({ error: 'Session has ended automatically' }, { status: 400 })
+      }, { status: 400 });
     }
 
     // 4. Scope & Eligibility Check
     if (session.scope === 'specific') {
       if (student.class !== session.class || student.section !== session.section) {
-        return NextResponse.json({ error: 'This session is not for this student' }, { status: 400 })
+        return NextResponse.json({ error: 'This session is not for this student' }, { status: 400 });
       }
     }
 
@@ -88,26 +93,18 @@ console.log("Session Start:", sessionStart.toLocaleString());
       .select('*')
       .eq('student_id', student.admission_number)
       .eq('session_id', session.id)
-      .single()
+      .single();
 
     if (existingLog) {
-      return NextResponse.json({ error: 'Attendance already marked' }, { status: 400 })
+      return NextResponse.json({ error: 'Attendance already marked' }, { status: 400 });
     }
 
     // 6. Determine Status (Late after 10 mins)
-    let status: 'present' | 'late' = 'present'
-    if (now.getTime() > (sessionStart.getTime() + 10 * 60 * 1000)) {
-      status = 'late'
+    let status: 'present' | 'late' = 'present';
+    if (pkTime.getTime() > (sessionStart.getTime() + 10 * 60 * 1000)) {
+      status = 'late';
     }
 
-// Is line ko error check ke baad add karein
-return NextResponse.json({ 
-  debug: true,
-  currentTime: new Date().toISOString(),
-  sessionStartTime: session.start_time,
-  sessionDate: session.date,
-  composedDate: `${session.date}T${session.start_time}:00`
-});
     // 7. Mark Attendance
     const { error: attendanceError } = await supabase
       .from('attendance_logs')
@@ -116,12 +113,12 @@ return NextResponse.json({
         session_id: session.id,
         date: session.date,
         status: status,
-        scan_time: now.toISOString(),
+        scan_time: pkTime.toISOString(),
         marked_by: user.id,
-      })
+      });
 
     if (attendanceError) {
-      throw attendanceError
+      throw attendanceError;
     }
 
     // Update session to active if it was scheduled
@@ -129,7 +126,7 @@ return NextResponse.json({
       await supabase
         .from('attendance_sessions')
         .update({ status: 'active' })
-        .eq('id', session.id)
+        .eq('id', session.id);
     }
 
     return NextResponse.json({
@@ -137,10 +134,10 @@ return NextResponse.json({
       message: `Attendance marked as ${status.toUpperCase()}`,
       student,
       status
-    })
+    });
 
   } catch (error: any) {
-    console.error('Error:', error)
-    return NextResponse.json({ error: 'Server error: ' + error.message }, { status: 500 })
+    console.error('Error:', error);
+    return NextResponse.json({ error: 'Server error: ' + error.message }, { status: 500 });
   }
 }
