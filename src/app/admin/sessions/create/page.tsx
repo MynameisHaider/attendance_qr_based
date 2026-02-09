@@ -1,5 +1,5 @@
 'use client'
-export const dynamic = 'force-dynamic';
+
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -17,12 +17,9 @@ export default function CreateSessionPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [formData, setFormData] = useState({
-    class: '',
-    section: '',
     date: new Date().toISOString().split('T')[0],
     startTime: '09:00',
     endTime: '09:30',
-    scope: 'all', // 'all' = any student, 'specific' = only matching class/section
   })
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -40,12 +37,10 @@ export default function CreateSessionPage() {
       const { error: sessionError } = await supabase
         .from('attendance_sessions')
         .insert({
-          class: formData.class,
-          section: formData.section,
           date: formData.date,
           start_time: formData.startTime,
           end_time: formData.endTime,
-          status: 'active',
+          status: 'scheduled',
           created_by: user.id,
         })
 
@@ -90,7 +85,7 @@ export default function CreateSessionPage() {
                 Session Details
               </CardTitle>
               <CardDescription>
-                Enter the details for the attendance session
+                Enter date and time for the attendance session
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -99,63 +94,6 @@ export default function CreateSessionPage() {
                   <Alert variant="destructive">
                     <AlertDescription>{error}</AlertDescription>
                   </Alert>
-                )}
-
-                {/* Session Scope */}
-                <div className="space-y-3">
-                  <div>
-                    <Label className="text-base font-medium">Who can attend this session?</Label>
-                    <div className="grid grid-cols-2 gap-4 mt-2">
-                      <Button
-                        type="button"
-                        variant={formData.scope === 'all' ? 'default' : 'outline'}
-                        onClick={() => setFormData({ ...formData, scope: 'all', class: '', section: '' })}
-                        className="h-16 flex flex-col items-center justify-start"
-                      >
-                        <span className="text-lg font-semibold">All Students</span>
-                        <span className="text-xs text-muted-foreground">Any student from any class can scan</span>
-                      </Button>
-                      <Button
-                        type="button"
-                        variant={formData.scope === 'specific' ? 'default' : 'outline'}
-                        onClick={() => setFormData({ ...formData, scope: 'specific' })}
-                        className="h-16 flex flex-col items-center justify-start"
-                      >
-                        <span className="text-lg font-semibold">Specific Class</span>
-                        <span className="text-xs text-muted-foreground">Only students from selected class</span>
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-
-                {formData.scope === 'specific' && (
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="class">Class</Label>
-                      <Input
-                        id="class"
-                        type="text"
-                        placeholder="10"
-                        required={formData.scope === 'specific'}
-                        value={formData.class}
-                        onChange={(e) => setFormData({ ...formData, class: e.target.value })}
-                        disabled={loading}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="section">Section</Label>
-                      <Input
-                        id="section"
-                        type="text"
-                        placeholder="A"
-                        required={formData.scope === 'specific'}
-                        value={formData.section}
-                        onChange={(e) => setFormData({ ...formData, section: e.target.value })}
-                        disabled={loading}
-                      />
-                    </div>
-                  </div>
                 )}
 
                 <div className="space-y-2">
@@ -204,8 +142,8 @@ export default function CreateSessionPage() {
                   <ul className="text-sm text-muted-foreground space-y-1">
                     <li>• Attendance can only be marked within the time window</li>
                     <li>• Students arriving more than 10 minutes late will be marked as "Late"</li>
-                    <li>• After end time, session closes automatically</li>
-                    <li>• Unmarked students will be auto-marked "Absent"</li>
+                    <li>• After the end time, the session closes automatically</li>
+                    <li>• Unmarked students will be auto-marked as "Absent"</li>
                   </ul>
                 </div>
 
