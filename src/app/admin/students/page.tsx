@@ -121,10 +121,12 @@ export default function StudentsPage() {
                   Bulk Upload
                 </Button>
               </Link>
-              <Button size="sm">
-                <Plus className="h-4 w-4 mr-2" />
-                Add Student
-              </Button>
+             <Button size="sm" asChild>
+			<Link href="/admin/students/add">
+			<Plus className="h-4 w-4 mr-2" />
+				Add Student
+			</Link>
+			</Button>
             </div>
           </div>
         </div>
@@ -176,11 +178,10 @@ export default function StudentsPage() {
 						</Link>
 					</Button>
 
-					{/* Add Single Student Button - Folder name check karein (add ya create?) */}
 						<Button variant="outline" asChild>
 							<Link href="/admin/students/add">
-								Add Single Student
-							</Link>
+								Add Student
+							</Link>              
 						</Button>
 					</div>
                   )}
