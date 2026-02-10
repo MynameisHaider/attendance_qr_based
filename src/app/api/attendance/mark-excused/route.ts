@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Get the attendance log
+    // Get attendance log directly from attendance_logs table
     const { data: logData, error: logError } = await supabase
       .from('attendance_logs')
       .select('*')
@@ -36,6 +36,13 @@ export async function POST(request: NextRequest) {
         { status: 404 }
       )
     }
+
+    // Get student info separately
+    const { data: studentData } = await supabase
+      .from('students')
+      .select('full_name, class, section')
+      .eq('admission_number', logData.student_id)
+      .single()
 
     // Update status to excused
     const { error: updateError } = await supabase
@@ -50,14 +57,17 @@ export async function POST(request: NextRequest) {
       throw updateError
     }
 
+    console.log('Marked as excused:', { logId, reason, student: studentData?.full_name })
+
     return NextResponse.json({
       success: true,
-      message: 'Attendance marked as excused'
+      message: 'Attendance marked as excused',
+      student: studentData,
     })
   } catch (error) {
     console.error('Mark excused error:', error)
     return NextResponse.json(
-      { error: 'Failed to mark as excused' },
+      { error: 'Failed to mark as excused', details: String(error) },
       { status: 500 }
     )
   }
