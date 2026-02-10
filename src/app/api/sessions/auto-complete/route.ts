@@ -15,17 +15,17 @@ export async function GET(request: NextRequest) {
       timeZone: 'Asia/Karachi'
     })
 
-    // Get date in Asia/Karachi timezone
+    // Get date in Asia/Karachi timezone (YYYY-MM-DD format to match session.date)
     const dateInKarachi = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Karachi' })
 
     console.log('=== AUTO-COMPLETE START ===')
     console.log('Current time (Karachi):', currentTimeInKarachi)
     console.log('Date (Karachi):', dateInKarachi)
 
-    // Get active sessions for today (Asia/Karachi timezone)
+    // Get active sessions for today
     const { data: activeSessions } = await supabase
       .from('attendance_sessions')
-      .select('*')
+      .select('id, date, start_time, end_time, created_by, status')
       .eq('date', dateInKarachi)
       .eq('status', 'active')
 
@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ message: 'No active sessions' })
     }
 
-    console.log(`Found ${activeSessions.length} active sessions`)
+    console.log(`Found ${activeSessions.length} active sessions for ${dateInKarachi}`)
 
     let completedCount = 0
     let totalAbsentMarked = 0
@@ -48,6 +48,8 @@ export async function GET(request: NextRequest) {
 
       // Check if end time has passed
       if (currentTimeInKarachi > session.end_time) {
+        console.log(`  Session ${session.id} has ended. Marking absent students...`)
+
         // Get already scanned students for this session
         const { data: existingLogs } = await supabase
           .from('attendance_logs')
@@ -55,67 +57,67 @@ export async function GET(request: NextRequest) {
           .eq('session_id', session.id)
 
         const scannedStudentIds = new Set(existingLogs?.map(l => l.student_id) || [])
-        console.log('  Already scanned:', scannedStudentIds.size, 'students')
+        console.log(`  Already scanned students: ${scannedStudentIds.size}`)
 
         // Get all students from database
-        const { data: allStudents } = await supabase
+        const { data: allStudentsData } = await supabase
           .from('students')
           .select('admission_number, full_name, class, section')
 
-        if (!allStudents) {
-          console.log('  ERROR: No students found in database')
+        if (!allStudentsData || allStudentsData.length === 0) {
+          console.error('ERROR: No students found in database')
           continue
         }
 
-        console.log('  Total students in DB:', allStudents.length)
+        console.log(`  Total students in DB: ${allStudentsData.length}`)
 
-        // Find students who weren't scanned (absent)
-        const absentStudents = allStudents.filter(s => !scannedStudentIds.has(s.admission_number))
+        // Find students who weren't scanned
+        const absentStudents = allStudentsData.filter(s => !scannedStudentIds.has(s.admission_number))
 
-        console.log('  Absent students found:', absentStudents.length)
+        console.log(`  Absent students: ${absentStudents.length}`)
 
-        // Insert absent records for students who weren't scanned
+        // Only insert absent for students who weren't scanned
         if (absentStudents.length > 0) {
           const attendanceData = absentStudents.map(s => ({
             student_id: s.admission_number,
             session_id: session.id,
-            date: dateInKarachi, // Use same format as session date
+            date: dateInKarachi, // Use consistent date format
             status: 'absent',
             scan_time: now.toISOString(), // Use ISO format for storage
             marked_by: session.created_by || '',
           }))
 
-          console.log('  Inserting attendance data for', absentStudents.length, 'students')
-          console.log('  Attendance data:', JSON.stringify(attendanceData, null, 2))
+          console.log(`  Inserting ${attendanceData.length} absent records...`)
 
           const { error: insertError } = await supabase
             .from('attendance_logs')
             .insert(attendanceData)
 
           if (insertError) {
-            console.error('  ERROR inserting absent records:', insertError)
+            console.error('ERROR inserting absent records:', insertError)
             console.error('  Error details:', JSON.stringify(insertError, null, 2))
           } else {
             totalAbsentMarked += attendanceData.length
-            console.log('  SUCCESS: Inserted', attendanceData.length, 'absent records')
+            console.log(`  SUCCESS: Inserted ${attendanceData.length} absent records`)
           }
+        } else {
+          console.log('  No absent students to mark (all already scanned)')
         }
 
         // Mark session as completed
-        console.log('  Marking session as completed...')
         const { error: updateError } = await supabase
           .from('attendance_sessions')
           .update({ status: 'completed' })
           .eq('id', session.id)
 
         if (updateError) {
-          console.error('  ERROR updating session status:', updateError)
+          console.error('ERROR updating session status:', updateError)
         } else {
           completedCount++
-          console.log('  SUCCESS: Session marked as completed')
+          console.log(`  SUCCESS: Session ${session.id} marked as completed`)
         }
       } else {
-        console.log('  Session still active, not completing')
+        console.log(`  Session ${session.id} still active (not ended yet)`)
       }
     }
 

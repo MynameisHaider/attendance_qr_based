@@ -8,8 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { ArrowLeft, Calendar, Users, Edit, Trash2, UserCheck, Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
+import { ArrowLeft, Calendar, Users, Edit, Trash2, UserCheck, Loader2, CheckCircle2, AlertCircle, Clock } from 'lucide-react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 
 interface AttendanceSession {
@@ -24,8 +23,9 @@ interface AttendanceSession {
 interface AttendanceLog {
   id: string
   student_id: string
-  session_id: string
-  date: string
+  student_name: string
+  class: string
+  section: string
   status: 'present' | 'absent' | 'late' | 'excused'
   scan_time: string
   marked_by: string
@@ -46,11 +46,11 @@ export default function SessionDetailPage() {
   const [session, setSession] = useState<AttendanceSession | null>(null)
   const [attendanceLogs, setAttendanceLogs] = useState<AttendanceLog[]>([])
   const [allStudents, setAllStudents] = useState<Student[]>([])
-  const [studentMap, setStudentMap] = useState<{ [key: string]: Student }>({})
   const [autoCompleted, setAutoCompleted] = useState(false)
   const [autoCompleteLoading, setAutoCompleteLoading] = useState(false)
   const [excusedInput, setExcusedInput] = useState<{ [key: string]: string }>({})
   const [markingLoading, setMarkingLoading] = useState<{ [key: string]: boolean }>({})
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (params.id) {
@@ -58,8 +58,21 @@ export default function SessionDetailPage() {
     }
   }, [params.id])
 
+  // Auto-refresh attendance every 5 seconds
+  useEffect(() => {
+    if (session && (session.status === 'active' || session.status === 'completed')) {
+      const interval = setInterval(() => {
+        fetchAttendanceLogs(session.id)
+      }, 5000)
+
+      return () => clearInterval(interval)
+    }
+  }, [session?.id, session?.status])
+
   const fetchSessionDetails = async (sessionId: string) => {
     try {
+      console.log('Fetching session details for:', sessionId)
+
       // Get session details
       const { data: sessionData, error: sessionError } = await supabase
         .from('attendance_sessions')
@@ -72,81 +85,75 @@ export default function SessionDetailPage() {
         return
       }
 
+      console.log('Session data:', sessionData)
       setSession(sessionData)
-
-      // Check if session should be auto-completed (Asia/Karachi timezone)
-      const now = new Date()
-      const currentTime = now.toLocaleTimeString('en-US', {
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-        timeZone: 'Asia/Karachi'
-      })
-      const today = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Karachi' })
-      const sessionDate = new Date(sessionData.date).toLocaleDateString('en-CA', { timeZone: 'Asia/Karachi' })
-
-      // If session is active and time has passed, auto-complete it
-      if (sessionData.status === 'active' && currentTime > sessionData.end_time) {
-        setAutoCompleteLoading(true)
-        await autoCompleteSession(sessionId)
-        setAutoCompleteLoading(false)
-        setAutoCompleted(true)
-        // Reload session data
-        const { data: updatedSession } = await supabase
-          .from('attendance_sessions')
-          .select('*')
-          .eq('id', sessionId)
-          .single()
-        if (updatedSession) {
-          setSession(updatedSession)
-        }
-      }
 
       // Get all students from database
       const { data: studentsData } = await supabase
         .from('students')
-        .select('*')
+        .select('admission_number, full_name, class, section')
         .order('full_name', { ascending: true })
 
-      if (studentsData) {
-        setAllStudents(studentsData)
-        // Build student map for quick lookup
-        const map: { [key: string]: Student } = {}
-        studentsData.forEach(s => {
-          map[s.admission_number] = s
-        })
-        setStudentMap(map)
+      if (!studentsData || studentsData.length === 0) {
+        console.error('ERROR: No students found in database')
+        setError('No students found in database')
+        return
       }
 
-      // Get attendance logs for this session (directly from attendance_logs, not view)
+      console.log(`Found ${studentsData.length} students in DB`)
+      setAllStudents(studentsData)
+
+      // Get attendance logs for this session
+      await fetchAttendanceLogs(sessionId)
+
+      setError(null)
+    } catch (err) {
+      console.error('Error fetching session details:', err)
+      setError('Failed to load session details')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const fetchAttendanceLogs = async (sessionId: string) => {
+    try {
+      console.log('Fetching attendance logs for session:', sessionId)
+
+      // Get attendance logs joined with students
       const { data: logsData } = await supabase
         .from('attendance_logs')
         .select(`
-          id,
-          student_id,
-          date,
-          session_id,
-          status,
-          scan_time,
-          marked_by
+          al.id,
+          al.student_id,
+          s.full_name,
+          s.class,
+          s.section,
+          al.session_id,
+          al.date,
+          al.status,
+          al.scan_time,
+          al.marked_by
         `)
         .eq('session_id', sessionId)
 
+      console.log(`Found ${logsData?.length || 0} attendance logs`)
+
       if (logsData) {
         setAttendanceLogs(logsData)
+      } else {
+        console.log('No attendance logs found')
+        setAttendanceLogs([])
       }
-    } catch (error) {
-      console.error('Error fetching session details:', error)
-    } finally {
-      setLoading(false)
+    } catch (err) {
+      console.error('Error fetching attendance logs:', err)
     }
   }
 
   const autoCompleteSession = async (sessionId: string) => {
     try {
       setAutoCompleteLoading(true)
+      setError(null)
 
-      // Get current time in Asia/Karachi timezone
       const now = new Date()
       const currentTimeInKarachi = now.toLocaleTimeString('en-US', {
         hour: '2-digit',
@@ -155,10 +162,10 @@ export default function SessionDetailPage() {
         timeZone: 'Asia/Karachi'
       })
 
-      // Get date in Asia/Karachi timezone (same format as session.date)
       const dateInKarachi = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Karachi' })
 
-      console.log('Auto-completing session:', sessionId)
+      console.log('=== AUTO-COMPLETE START ===')
+      console.log('Session ID:', sessionId)
       console.log('Current time (Karachi):', currentTimeInKarachi)
       console.log('Date (Karachi):', dateInKarachi)
 
@@ -169,58 +176,69 @@ export default function SessionDetailPage() {
         .eq('session_id', sessionId)
 
       const scannedStudentIds = new Set(existingLogs?.map(l => l.student_id) || [])
+      console.log(`Already scanned students: ${scannedStudentIds.size}`)
 
-      // Get all students
-      const { data: allStudentsData } = await supabase
-        .from('students')
-        .select('*')
+      if (!allStudents || allStudents.length === 0) {
+        setError('No students found in database')
+        return
+      }
 
-      if (allStudentsData) {
-        // Only insert absent for students who weren't scanned
-        const absentStudents = allStudentsData.filter(s => !scannedStudentIds.has(s.admission_number))
+      // Find students who weren't scanned
+      const absentStudents = allStudents.filter(s => !scannedStudentIds.has(s.admission_number))
 
-        console.log(`Session ${sessionId}: Total ${allStudentsData.length}, Scanned ${scannedStudentIds.size}, Absent ${absentStudents.length}`)
+      console.log(`Absent students: ${absentStudents.length}`)
 
-        if (absentStudents.length > 0) {
-          // Insert absent records with consistent date format
-          const attendanceData = absentStudents.map(s => ({
-            student_id: s.admission_number,
-            session_id: sessionId,
-            date: dateInKarachi,
-            status: 'absent',
-            scan_time: now.toISOString(),
-            marked_by: session?.created_by || '',
-          }))
+      if (absentStudents.length > 0) {
+        // Insert absent records
+        const attendanceData = absentStudents.map(s => ({
+          student_id: s.admission_number,
+          session_id: sessionId,
+          date: dateInKarachi,
+          status: 'absent',
+          scan_time: now.toISOString(),
+          marked_by: session?.created_by || '',
+        }))
 
-          console.log('Inserting', attendanceData.length, 'absent records...')
+        console.log(`Inserting ${attendanceData.length} absent records...`)
 
-          const { error: insertError } = await supabase
-            .from('attendance_logs')
-            .insert(attendanceData)
+        const { error: insertError } = await supabase
+          .from('attendance_logs')
+          .insert(attendanceData)
 
-          if (insertError) {
-            console.error('Error inserting absent records:', insertError)
-            console.error('Error details:', JSON.stringify(insertError, null, 2))
-            alert('Failed to mark absent students. Error: ' + JSON.stringify(insertError))
-            return
-          }
-
-          console.log('Successfully inserted', attendanceData.length, 'absent records')
+        if (insertError) {
+          console.error('ERROR inserting absent records:', insertError)
+          console.error('Error details:', JSON.stringify(insertError, null, 2))
+          setError(`Failed to mark absent students: ${insertError.message || 'Unknown error'}`)
+          return
         }
 
-        // Mark session as completed
-        console.log('Marking session as completed...')
-        await supabase
-          .from('attendance_sessions')
-          .update({ status: 'completed' })
-          .eq('id', sessionId)
-
-        setAutoCompleted(true)
-        alert(`Session completed! ${absentStudents.length} students marked as absent.`)
+        console.log(`Successfully inserted ${attendanceData.length} absent records`)
+      } else {
+        console.log('No absent students to mark (all already scanned)')
       }
-    } catch (error) {
-      console.error('Auto-complete session error:', error)
-      alert('Failed to complete session. Please try again.')
+
+      // Mark session as completed
+      const { error: updateError } = await supabase
+        .from('attendance_sessions')
+        .update({ status: 'completed' })
+        .eq('id', sessionId)
+
+      if (updateError) {
+        console.error('ERROR updating session status:', updateError)
+        setError('Failed to complete session')
+        return
+      }
+
+      console.log('Session marked as completed')
+      setAutoCompleted(true)
+
+      // Refresh data
+      await fetchSessionDetails(sessionId)
+
+    } catch (err) {
+      console.error('=== AUTO-COMPLETE ERROR ===')
+      console.error('Error:', err)
+      setError('Failed to complete session')
     } finally {
       setAutoCompleteLoading(false)
     }
@@ -229,8 +247,30 @@ export default function SessionDetailPage() {
   const handleMarkAsExcused = async (logId: string, studentId: string) => {
     try {
       setMarkingLoading({ ...markingLoading, [studentId]: true })
+      setError(null)
 
       const reason = excusedInput[studentId] || ''
+      console.log('Marking as excused:', { logId, studentId, reason)
+
+      // Check if session is within 10 minutes of end time
+      if (!session) {
+        return
+      }
+
+      const now = new Date()
+      const currentTimeInKarachi = now.toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+        timeZone: 'Asia/Karachi'
+      })
+
+      const minutesPastEnd = getTimeDifferenceInMinutes(session.end_time, currentTimeInKarachi)
+
+      if (minutesPastEnd > 10) {
+        setError('Marking as excused is only allowed within 10 minutes after session ends')
+        return
+      }
 
       // Call API to mark as excused
       const response = await fetch('/api/attendance/mark-excused', {
@@ -242,15 +282,16 @@ export default function SessionDetailPage() {
       const data = await response.json()
 
       if (response.ok) {
+        console.log('Successfully marked as excused')
         // Refresh attendance logs
-        await fetchSessionDetails(session!.id)
+        await fetchAttendanceLogs(session!.id)
         setExcusedInput({ ...excusedInput, [studentId]: '' })
       } else {
-        alert(data.error || 'Failed to mark as excused')
+        setError(data.error || 'Failed to mark as excused')
       }
-    } catch (error) {
-      console.error('Mark excused error:', error)
-      alert('Failed to mark as excused')
+    } catch (err) {
+      console.error('Mark excused error:', err)
+      setError('Failed to mark as excused')
     } finally {
       setMarkingLoading({ ...markingLoading, [studentId]: false })
     }
@@ -271,10 +312,20 @@ export default function SessionDetailPage() {
       if (error) throw error
 
       router.push('/admin/sessions')
-    } catch (error) {
-      console.error('Error deleting session:', error)
+    } catch (err) {
+      console.error('Error deleting session:', err)
       alert('Failed to delete session')
     }
+  }
+
+  const getTimeDifferenceInMinutes = (time1: string, time2: string): number => {
+    const [h1, m1] = time1.split(':').map(Number)
+    const [h2, m2] = time2.split(':').map(Number)
+    const date1 = new Date()
+    const date2 = new Date()
+    date1.setHours(h1, m1)
+    date2.setHours(h2, m2)
+    return Math.abs(date1.getTime() - date2.getTime()) / 60000 // Convert to minutes
   }
 
   const getStatusBadge = (status: string) => {
@@ -329,6 +380,26 @@ export default function SessionDetailPage() {
     return allStudents.filter(s => !scannedStudentIds.has(s.admission_number))
   }
 
+  const isMarkingDisabled = (sessionId: string, studentId: string): boolean => {
+    if (!session) return true
+
+    const now = new Date()
+    const currentTimeInKarachi = now.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: 'Asia/Karachi'
+    })
+
+    // If session is not completed, enable marking
+    if (session.status !== 'completed') return false
+
+    const minutesPastEnd = getTimeDifferenceInMinutes(session.end_time, currentTimeInKarachi)
+
+    // Only disable if more than 10 minutes past end time
+    return minutesPastEnd > 10
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900">
@@ -360,8 +431,17 @@ export default function SessionDetailPage() {
   const currentTime = new Date().toLocaleTimeString('en-US', {
     hour: '2-digit',
     minute: '2-digit',
+    hour12: false,
     timeZone: 'Asia/Karachi'
   })
+  const now = new Date()
+  const currentTimeInKarachi = now.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Karachi'
+  })
+  const minutesPastEnd = getTimeDifferenceInMinutes(session.end_time, currentTimeInKarachi)
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900">
@@ -385,13 +465,15 @@ export default function SessionDetailPage() {
       {/* Main Content */}
       <main className="flex-1 container mx-auto px-4 py-8">
         <div className="max-w-6xl mx-auto space-y-6">
-          {autoCompleteLoading && (
-            <Alert>
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              <AlertDescription>Auto-completing session... Please wait.</AlertDescription>
+          {/* Error Alert */}
+          {error && (
+            <Alert className="bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800">
+              <AlertCircle className="h-4 w-4 mr-2 text-red-600" />
+              <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
 
+          {/* Auto-completed Alert */}
           {autoCompleted && (
             <Alert className="bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-800">
               <CheckCircle2 className="h-4 w-4 mr-2 text-green-600" />
@@ -444,13 +526,16 @@ export default function SessionDetailPage() {
                 </div>
                 <div className="flex items-center gap-2">
                   <Calendar className="h-4 w-4 text-muted-foreground" />
+                  <Clock className="h-4 w-4 text-muted-foreground" />
                   <span className="text-muted-foreground">Current Time (Karachi):</span>
-                  <span className="font-medium">{new Date().toLocaleTimeString('en-US', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    timeZone: 'Asia/Karachi'
-                  })}</span>
+                  <span className="font-medium">{currentTime}</span>
                 </div>
+                {session.status === 'completed' && minutesPastEnd > 0 && (
+                  <div className="flex items-center gap-1 text-xs text-yellow-600">
+                    <Clock className="h-3 w-3" />
+                    <span>{minutesPastEnd} minutes past end</span>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -506,55 +591,47 @@ export default function SessionDetailPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                  {attendanceLogs.map((log) => {
-                    const student = studentMap[log.student_id]
-                    if (!student) {
-                      console.error('Student not found for log.student_id:', log.student_id)
-                      return null
-                    }
-
-                    return (
-                      <div
-                        key={log.id}
-                        className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-3">
-                            <div className="flex-shrink-0">
-                              <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
-                                <span className="text-sm font-medium text-primary">
-                                  {student.full_name.split(' ').map(n => n[0]).join('').slice(0, 2)}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <h4 className="font-semibold truncate">{student.full_name}</h4>
-                              <div className="text-sm text-muted-foreground">
-                                <span>Adm: {log.student_id}</span>
-                                <span className="mx-2">•</span>
-                                <span>{student.class} - {student.section}</span>
-                              </div>
+                  {attendanceLogs.map((log) => (
+                    <div
+                      key={log.id}
+                      className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-3">
+                          <div className="flex-shrink-0">
+                            <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
+                              <span className="text-sm font-medium text-primary">
+                                {log.student_name.split(' ').map(n => n[0]).join('').slice(0, 2)}
+                              </span>
                             </div>
                           </div>
-                        </div>
-                        <div className="flex items-center gap-4">
-                          <Badge
-                            variant="outline"
-                            className={getStatusColor(log.status)}
-                          >
-                            {log.status.toUpperCase()}
-                          </Badge>
-                          <div className="text-sm text-muted-foreground">
-                            {new Date(log.scan_time).toLocaleTimeString('en-US', {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                              timeZone: 'Asia/Karachi'
-                            })}
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-semibold truncate">{log.student_name}</h4>
+                            <div className="text-sm text-muted-foreground">
+                              <span>Adm: {log.student_id}</span>
+                              <span className="mx-2">•</span>
+                              <span>{log.class} - {log.section}</span>
+                            </div>
                           </div>
                         </div>
                       </div>
-                    )
-                  })}
+                      <div className="flex items-center gap-4">
+                        <Badge
+                          variant="outline"
+                          className={getStatusColor(log.status)}
+                        >
+                          {log.status.toUpperCase()}
+                        </Badge>
+                        <div className="text-sm text-muted-foreground">
+                          {new Date(log.scan_time).toLocaleTimeString('en-US', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            timeZone: 'Asia/Karachi'
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </CardContent>
             </Card>
@@ -570,6 +647,9 @@ export default function SessionDetailPage() {
                 </CardTitle>
                 <CardDescription>
                   Mark as excused/leave if student had permission
+                  {session.status === 'completed' && minutesPastEnd <= 10 && (
+                    <span>Marking available until {10 - minutesPastEnd} minutes past end</span>
+                  )}
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -621,7 +701,7 @@ export default function SessionDetailPage() {
                                 alert('Student record not found')
                               }
                             }}
-                            disabled={markingLoading[student.admission_number]}
+                            disabled={markingLoading[student.admission_number] || isMarkingDisabled(session!.id, student.admission_number)}
                           >
                             {markingLoading[student.admission_number] ? (
                               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -639,11 +719,16 @@ export default function SessionDetailPage() {
           )}
 
           {/* Submit All Excused Button */}
-          {session.status === 'completed' && absentStudents.length > 0 && Object.keys(excusedInput).length > 0 && (
+          {session.status === 'completed' && absentStudents.length > 0 && Object.keys(excusedInput).length > 0 && minutesPastEnd <= 10 && (
             <Card>
               <CardHeader>
                 <CardTitle>Submit Excused Marks</CardTitle>
-                <CardDescription>Add reason for excused students (optional)</CardDescription>
+                <CardDescription>
+                  Add reason for excused students (optional)
+                  {session.status === 'completed' && minutesPastEnd <= 10 && (
+                    <span>Available until {10 - minutesPastEnd} minutes past end</span>
+                  )}
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <Button
@@ -656,15 +741,27 @@ export default function SessionDetailPage() {
                         const absentLog = attendanceLogs.find(l => l.student_id === studentId && l.status === 'absent')
                         if (absentLog) {
                           setMarkingLoading({ ...markingLoading, [studentId]: true })
-                          await handleMarkAsExcused(absentLog.id, studentId)
-                          successCount++
+                          const response = await fetch('/api/attendance/mark-excused', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ logId: absentLog.id, reason }),
+                          })
+                          const data = await response.json()
+                          if (response.ok) {
+                            successCount++
+                            // Clear input after successful mark
+                            setExcusedInput({ ...excusedInput, [studentId]: '' })
+                          } else {
+                            setError(data.error || 'Failed to mark as excused')
+                          return
+                          }
                         }
                       }
                     }
 
                     if (successCount > 0) {
                       setExcusedInput({})
-                      await fetchSessionDetails(session!.id)
+                      await fetchAttendanceLogs(session!.id)
                       alert(`Successfully marked ${successCount} students as excused!`)
                     } else {
                       alert('Please enter at least one reason to submit')
