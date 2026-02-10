@@ -250,7 +250,7 @@ export default function SessionDetailPage() {
       setError(null)
 
       const reason = excusedInput[studentId] || ''
-      console.log('Marking as excused:', { logId, studentId, reason)
+      console.log('Marking as excused:', { logId, studentId, reason });
 
       // Check if session is within 10 minutes of end time
       if (!session) {
